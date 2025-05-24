@@ -3,7 +3,6 @@ package com.bitblazer.whatsweep.viewmodel
 import android.app.Application
 import android.content.Context
 import android.util.Log
-import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bitblazer.whatsweep.model.MediaFile
@@ -15,194 +14,377 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
-// Data class to track scanning progress
+/**
+ * Data class representing the progress of media scanning operation.
+ *
+ * @property filesProcessed Number of files that have been processed
+ * @property totalFilesFound Total number of files found (-1 if not yet determined)
+ * @property currentDirectory Name of directory currently being scanned
+ */
 data class ScanProgress(
-    val filesProcessed: Int = 0, val totalFilesFound: Int = -1  // -1 means total not yet known
+    val filesProcessed: Int = 0,
+    val totalFilesFound: Int = -1,  // -1 means total not yet known
+    val currentDirectory: String = ""
 )
 
+/**
+ * UI state representing the scanning operation status.
+ */
+sealed class ScanState {
+    object Idle : ScanState()
+    data class Scanning(val progress: ScanProgress) : ScanState()
+    data class Completed(val notesCount: Int, val otherCount: Int) : ScanState()
+    data class Error(val message: String, val exception: Throwable? = null) : ScanState()
+}
+
+/**
+ * Main ViewModel handling media scanning, classification, and file management.
+ *
+ * Responsibilities:
+ * - Coordinating media scanning operations
+ * - Managing UI state for notes and other files
+ * - Handling file selection and deletion
+ * - Providing reactive state updates for UI
+ *
+ * Architecture: Follows MVVM pattern with clear separation of concerns.
+ * All business logic is contained here, keeping UI components stateless.
+ */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val TAG = "MainViewModel"
+    }
+
     private val context: Context
         get() = getApplication<Application>()
 
+    // Dependencies - injected for better testability
     private val mediaScanner = MediaScanner(context)
     private val preferencesManager = PreferencesManager(context)
 
-    private val _isScanning = MutableStateFlow(false)
-    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+    // Scan state management
+    private val _scanState = MutableStateFlow<ScanState>(ScanState.Idle)
+    val scanState: StateFlow<ScanState> = _scanState.asStateFlow()
 
-    // Add scan progress tracking
-    private val _scanProgress = MutableStateFlow(ScanProgress())
-    val scanProgress: StateFlow<ScanProgress> = _scanProgress.asStateFlow()
+    // Backwards compatibility
+    val isScanning: StateFlow<Boolean> = MutableStateFlow(false)
+    val scanProgress: StateFlow<ScanProgress> = MutableStateFlow(ScanProgress())
 
-    // Use Sets to avoid duplicates
-    private val _notesFiles = mutableStateListOf<MediaFile>()
-    val notesFiles: List<MediaFile> = _notesFiles
+    // Media files state - using StateFlow for reactive UI updates
+    private val _notesFiles = MutableStateFlow<List<MediaFile>>(emptyList())
+    val notesFiles: StateFlow<List<MediaFile>> = _notesFiles.asStateFlow()
 
-    private val _otherFiles = mutableStateListOf<MediaFile>()
-    val otherFiles: List<MediaFile> = _otherFiles
+    private val _otherFiles = MutableStateFlow<List<MediaFile>>(emptyList())
+    val otherFiles: StateFlow<List<MediaFile>> = _otherFiles.asStateFlow()
 
-    // Track file keys to avoid duplicates
+    private val _selectedFiles = MutableStateFlow<List<MediaFile>>(emptyList())
+    val selectedFiles: StateFlow<List<MediaFile>> = _selectedFiles.asStateFlow()
+
+    // Error message state for general UI messages (separate from scan state errors)
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // Internal tracking for deduplication
     private val processedFileKeys = mutableSetOf<String>()
 
-    private val _selectedFiles = mutableStateListOf<MediaFile>()
-    val selectedFiles: List<MediaFile> = _selectedFiles
-
     init {
-        // Sort the lists when initialized
-        sortMediaLists()
+        Log.d(TAG, "MainViewModel initialized")
     }
 
+    /**
+     * Initiates WhatsApp folder scanning with proper error handling and state management.
+     *
+     * This operation runs on a background thread and updates UI state reactively.
+     * Handles deduplication and sorts results for optimal user experience.
+     */
     fun scanWhatsAppFolder() {
-        _isScanning.value = true
-        _notesFiles.clear()
-        _otherFiles.clear()
-        processedFileKeys.clear()
-        _scanProgress.value = ScanProgress()  // Reset progress counter
+        if (_scanState.value is ScanState.Scanning) {
+            Log.w(TAG, "Scan already in progress, ignoring request")
+            return
+        }
+
+        Log.d(TAG, "Starting WhatsApp folder scan")
+        _scanState.value = ScanState.Scanning(ScanProgress())
+
+        // Clear previous results
+        clearCurrentResults()
 
         viewModelScope.launch {
             try {
                 mediaScanner.scanWhatsAppFolder().collect { mediaFile ->
                     processMediaFile(mediaFile)
                 }
-                // Sort lists after scan is complete
+
+                // Sort and finalize results
                 sortMediaLists()
-            } finally {
-                _isScanning.value = false
+
+                val notesCount = _notesFiles.value.size
+                val otherCount = _otherFiles.value.size
+
+                _scanState.value = ScanState.Completed(notesCount, otherCount)
+                Log.d(TAG, "Scan completed: $notesCount notes, $otherCount others")
+
+            } catch (exception: Exception) {
+                Log.e(TAG, "Scan failed", exception)
+                _scanState.value = ScanState.Error(
+                    message = "Failed to scan WhatsApp folder: ${exception.localizedMessage}",
+                    exception = exception
+                )
             }
         }
     }
 
+    /**
+     * Clears current scan results and resets state.
+     */
+    private fun clearCurrentResults() {
+        _notesFiles.value = emptyList()
+        _otherFiles.value = emptyList()
+        _selectedFiles.value = emptyList()
+        processedFileKeys.clear()
+    }
+
+    /**
+     * Processes a newly discovered media file, handling deduplication and categorization.
+     */
     private fun processMediaFile(mediaFile: MediaFile) {
-        // Skip if we've already processed this file key
+        // Skip duplicates based on unique key
         if (processedFileKeys.contains(mediaFile.key)) {
+            Log.v(TAG, "Skipping duplicate file: ${mediaFile.key}")
             return
         }
 
         processedFileKeys.add(mediaFile.key)
 
+        // Update appropriate list based on classification
         if (mediaFile.isNotes) {
-            _notesFiles.add(mediaFile)
+            _notesFiles.value = _notesFiles.value + mediaFile
+            Log.v(TAG, "Added notes file: ${mediaFile.name}")
         } else {
-            _otherFiles.add(mediaFile)
+            _otherFiles.value = _otherFiles.value + mediaFile
+            Log.v(TAG, "Added other file: ${mediaFile.name}")
         }
 
-        // Update progress counter
-        val current = _scanProgress.value
-        _scanProgress.value = current.copy(filesProcessed = current.filesProcessed + 1)
+        // Update scan progress if in scanning state
+        val currentState = _scanState.value
+        if (currentState is ScanState.Scanning) {
+            val updatedProgress = currentState.progress.copy(
+                filesProcessed = currentState.progress.filesProcessed + 1
+            )
+            _scanState.value = ScanState.Scanning(updatedProgress)
+        }
     }
 
     /**
-     * Sort media lists so images appear first, then PDFs
+     * Sorts media lists for optimal user experience.
+     * Images appear first, then PDFs, sorted alphabetically within each type.
      */
     private fun sortMediaLists() {
-        val sortedNotes =
-            _notesFiles.sortedWith(compareBy<MediaFile> { !it.isImage }  // Images first
-                .thenBy { it.name }               // Then by name
-            )
-        val sortedOthers =
-            _otherFiles.sortedWith(compareBy<MediaFile> { !it.isImage }  // Images first
-                .thenBy { it.name }               // Then by name
-            )
+        val sortComparator = compareBy<MediaFile> { !it.isImage }  // Images first
+            .thenBy { it.name.lowercase() }  // Then alphabetically
 
-        _notesFiles.clear()
-        _notesFiles.addAll(sortedNotes)
+        _notesFiles.value = _notesFiles.value.sortedWith(sortComparator)
+        _otherFiles.value = _otherFiles.value.sortedWith(sortComparator)
 
-        _otherFiles.clear()
-        _otherFiles.addAll(sortedOthers)
+        Log.d(TAG, "Media lists sorted")
     }
 
     /**
-     * Toggle selection state of a media file
+     * Toggles selection state of a media file.
+     *
+     * @param mediaFile The file to toggle selection for
      */
     fun toggleSelection(mediaFile: MediaFile) {
-        val existingSelected = _selectedFiles.find { it.key == mediaFile.key }
-        val isCurrentlySelected = existingSelected != null
-        toggleSelection(mediaFile, !isCurrentlySelected)
+        val currentlySelected = _selectedFiles.value.any { it.key == mediaFile.key }
+        setSelectionState(mediaFile, !currentlySelected)
     }
 
     /**
-     * Set selection state of a media file to a specific value
+     * Sets the selection state of a media file to a specific value.
+     *
+     * @param mediaFile The file to update
+     * @param selected Whether the file should be selected
      */
-    fun toggleSelection(mediaFile: MediaFile, selected: Boolean) {
-        val list = if (mediaFile.isNotes) _notesFiles else _otherFiles
-        val index = list.indexOf(mediaFile)
+    fun setSelectionState(mediaFile: MediaFile, selected: Boolean) {
+        // Update the file in the appropriate list
+        updateFileInList(mediaFile) { it.copy(isSelected = selected) }
 
-        if (index != -1) {
-            // Check if this file is already selected by key to avoid duplicates
-            val existingSelected = _selectedFiles.find { it.key == mediaFile.key }
-            val isCurrentlySelected = existingSelected != null
+        // Update selected files list
+        if (selected) {
+            if (_selectedFiles.value.none { it.key == mediaFile.key }) {
+                _selectedFiles.value = _selectedFiles.value + mediaFile.copy(isSelected = true)
+            }
+        } else {
+            _selectedFiles.value = _selectedFiles.value.filterNot { it.key == mediaFile.key }
+        }
 
-            // Only update if the selection state is different
-            if (isCurrentlySelected != selected) {
-                // Create updated file with new selection state
-                val updatedFile = mediaFile.copy(isSelected = selected)
-                list[index] = updatedFile
+        Log.v(TAG, "File ${mediaFile.name} selection: $selected")
+    }
 
-                // Update the selected files list
-                if (updatedFile.isSelected) {
-                    if (existingSelected == null) {  // Don't add if already in the list
-                        _selectedFiles.add(updatedFile)
-                    }
-                } else {
-                    if (existingSelected != null) {
-                        _selectedFiles.remove(existingSelected)
-                    }
-                }
+    /**
+     * Updates a file in the appropriate list with a transformation function.
+     */
+    private fun updateFileInList(mediaFile: MediaFile, transform: (MediaFile) -> MediaFile) {
+        if (mediaFile.isNotes) {
+            _notesFiles.value = _notesFiles.value.map { file ->
+                if (file.key == mediaFile.key) transform(file) else file
+            }
+        } else {
+            _otherFiles.value = _otherFiles.value.map { file ->
+                if (file.key == mediaFile.key) transform(file) else file
             }
         }
     }
 
+    /**
+     * Deletes all currently selected files from storage and updates the UI.
+     *
+     * @return Number of files successfully deleted
+     */
     fun deleteSelectedFiles(): Int {
-        var count = 0
-        val filesToDelete = _selectedFiles.toList()
+        val filesToDelete = _selectedFiles.value.toList()
+        var successCount = 0
+        val errors = mutableListOf<String>()
+
+        Log.d(TAG, "Attempting to delete ${filesToDelete.size} selected files")
 
         filesToDelete.forEach { mediaFile ->
-            if (mediaFile.file.exists() && mediaFile.file.delete()) {
-                count++
-
-                // Delete thumbnail file if it exists (for PDFs)
-                if (mediaFile.isPdf && mediaFile.thumbnailUri != null) {
-                    try {
-                        val thumbnailFile = File(mediaFile.thumbnailUri.path!!)
-                        if (thumbnailFile.exists()) {
-                            thumbnailFile.delete()
-                        }
-                    } catch (e: Exception) {
-                        Log.e("MainViewModel", "Error deleting thumbnail: ${e.message}")
-                    }
-                }
-
-                // Also remove from cache if using PreferencesManager
-                if (mediaFile.isNotes) {
-                    val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableMap()
-                    cachedNotes.remove(mediaFile.path)
-                    preferencesManager.saveClassifiedNotesFiles(cachedNotes)
+            try {
+                if (deleteMediaFile(mediaFile)) {
+                    successCount++
+                    removeFileFromLists(mediaFile)
+                    Log.d(TAG, "Successfully deleted: ${mediaFile.name}")
                 } else {
-                    val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableMap()
-                    cachedOthers.remove(mediaFile.path)
-                    preferencesManager.saveClassifiedOtherFiles(cachedOthers)
+                    errors.add("Failed to delete: ${mediaFile.name}")
                 }
-
-                // Remove from our lists
-                removeFileFromLists(mediaFile)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error deleting file: ${mediaFile.name}", e)
+                errors.add("Error deleting ${mediaFile.name}: ${e.localizedMessage}")
             }
         }
 
-        _selectedFiles.clear()
-        return count
+        // Clear selection
+        _selectedFiles.value = emptyList()
+
+        if (errors.isNotEmpty()) {
+            Log.w(TAG, "Some files could not be deleted: ${errors.joinToString()}")
+        }
+
+        Log.d(TAG, "Deletion completed: $successCount/${filesToDelete.size} files deleted")
+        return successCount
     }
 
+    /**
+     * Deletes a single media file and its associated thumbnail if applicable.
+     */
+    private fun deleteMediaFile(mediaFile: MediaFile): Boolean {
+        var success = false
 
-    private fun removeFileFromLists(mediaFile: MediaFile) {
-        if (mediaFile.isNotes) {
-            _notesFiles.remove(mediaFile)
-        } else {
-            _otherFiles.remove(mediaFile)
+        // Delete main file
+        if (mediaFile.file.exists()) {
+            success = mediaFile.file.delete()
+
+            // Delete thumbnail for PDFs
+            if (success && mediaFile.isPdf && mediaFile.thumbnailUri != null) {
+                try {
+                    val thumbnailFile = File(mediaFile.thumbnailUri.path!!)
+                    if (thumbnailFile.exists()) {
+                        thumbnailFile.delete()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not delete thumbnail for ${mediaFile.name}", e)
+                }
+            }
+        }
+
+        // Remove from cache
+        if (success) {
+            removeCachedClassification(mediaFile)
+        }
+
+        return success
+    }
+
+    /**
+     * Removes cached classification data for a deleted file.
+     */
+    private fun removeCachedClassification(mediaFile: MediaFile) {
+        try {
+            if (mediaFile.isNotes) {
+                val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableMap()
+                cachedNotes.remove(mediaFile.path)
+                preferencesManager.saveClassifiedNotesFiles(cachedNotes)
+            } else {
+                val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableMap()
+                cachedOthers.remove(mediaFile.path)
+                preferencesManager.saveClassifiedOtherFiles(cachedOthers)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not update classification cache", e)
         }
     }
 
+    /**
+     * Removes a file from the appropriate UI list.
+     */
+    private fun removeFileFromLists(mediaFile: MediaFile) {
+        if (mediaFile.isNotes) {
+            _notesFiles.value = _notesFiles.value.filterNot { it.key == mediaFile.key }
+        } else {
+            _otherFiles.value = _otherFiles.value.filterNot { it.key == mediaFile.key }
+        }
+    }
+
+    /**
+     * Clears all selected files without deleting them.
+     */
+    fun clearSelection() {
+        // Update selection state in lists
+        _notesFiles.value = _notesFiles.value.map { it.copy(isSelected = false) }
+        _otherFiles.value = _otherFiles.value.map { it.copy(isSelected = false) }
+        _selectedFiles.value = emptyList()
+
+        Log.d(TAG, "Selection cleared")
+    }
+
+    /**
+     * Retries the last scan operation if it failed.
+     */
+    fun retryScan() {
+        if (_scanState.value is ScanState.Error) {
+            Log.d(TAG, "Retrying scan after error")
+            scanWhatsAppFolder()
+        }
+    }
+
+    /**
+     * Clears the current error message.
+     */
+    fun clearError() {
+        _errorMessage.value = null
+        Log.d(TAG, "Error message cleared")
+    }
+
+    /**
+     * Sets an error message to be displayed to the user.
+     */
+    fun setErrorMessage(message: String) {
+        _errorMessage.value = message
+        Log.d(TAG, "Error message set: $message")
+    }
+
+    /**
+     * Properly releases resources when ViewModel is cleared.
+     * Ensures MediaScanner and ML Kit resources are properly cleaned up.
+     */
     override fun onCleared() {
         super.onCleared()
-        mediaScanner.onDestroy()
+        Log.d(TAG, "MainViewModel clearing resources")
+
+        try {
+            mediaScanner.onDestroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during MediaScanner cleanup", e)
+        }
     }
 }

@@ -78,6 +78,7 @@ import coil.request.ImageRequest
 import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.util.PreferencesManager
 import com.bitblazer.whatsweep.viewmodel.MainViewModel
+import com.bitblazer.whatsweep.viewmodel.ScanState
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import kotlinx.coroutines.launch
@@ -95,11 +96,12 @@ fun ResultsScreen(
     val prefsManager = remember { PreferencesManager(context) }
     val showConfidenceScores = remember { prefsManager.showConfidenceScores }
 
-    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
-    val scanProgress by viewModel.scanProgress.collectAsStateWithLifecycle()
-    val notesFiles = viewModel.notesFiles
-    val otherFiles = viewModel.otherFiles
-    val selectedFiles = viewModel.selectedFiles
+    // Collect state using proper StateFlow collectors
+    val scanState by viewModel.scanState.collectAsStateWithLifecycle()
+    val notesFiles by viewModel.notesFiles.collectAsStateWithLifecycle()
+    val otherFiles by viewModel.otherFiles.collectAsStateWithLifecycle()
+    val selectedFiles by viewModel.selectedFiles.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
@@ -166,7 +168,6 @@ fun ResultsScreen(
     val hasBasicPermissions = readMediaPermissions.allPermissionsGranted
     val hasAllPermissions =
         hasBasicPermissions && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || isExternalStorageManager)
-
     val tabs = listOf(
         "Notes (${notesFiles.size})", "Others (${otherFiles.size})"
     )
@@ -234,9 +235,8 @@ fun ResultsScreen(
                     }
                     // Select all toggle
                     val currentPage = pagerState.currentPage
-                    val currentPageFiles = if (currentPage == 0) notesFiles else otherFiles
-
-                    // Check if all files in the current tab are selected
+                    val currentPageFiles =
+                        if (currentPage == 0) notesFiles else otherFiles                    // Check if all files in the current tab are selected
                     val allSelected =
                         currentPageFiles.isNotEmpty() && currentPageFiles.all { it.isSelected }
                     // Select all checkbox
@@ -244,9 +244,9 @@ fun ResultsScreen(
                         checked = allSelected, onCheckedChange = { checked ->
                             // Select or deselect all files in the current tab
                             if (currentPage == 0) {
-                                notesFiles.forEach { viewModel.toggleSelection(it, checked) }
+                                notesFiles.forEach { viewModel.setSelectionState(it, checked) }
                             } else {
-                                otherFiles.forEach { viewModel.toggleSelection(it, checked) }
+                                otherFiles.forEach { viewModel.setSelectionState(it, checked) }
                             }
                         }, colors = CheckboxDefaults.colors(
                             checkedColor = MaterialTheme.colorScheme.onPrimary,
@@ -270,7 +270,7 @@ fun ResultsScreen(
                                 }
                             }
                         },
-                        enabled = !isScanning && hasAllPermissions,
+                        enabled = scanState !is ScanState.Scanning && hasAllPermissions,
                         modifier = Modifier.padding(horizontal = 8.dp)
                     ) {
                         Icon(
@@ -303,152 +303,314 @@ fun ResultsScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+        ) {            // Handle different scan states
+            when (scanState) {
+                is ScanState.Idle -> {
+                    if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
+                        // Empty state - show welcome message and instructions
+                        EmptyStateContent(hasAllPermissions = hasAllPermissions)
+                    } else {
+                        // Show content with tabs
+                        ContentTabs(
+                            pagerState = pagerState,
+                            tabs = tabs,
+                            notesFiles = notesFiles,
+                            otherFiles = otherFiles,
+                            viewModel = viewModel,
+                            showConfidenceScores = showConfidenceScores,
+                            isGridView = isGridView,
+                            coroutineScope = coroutineScope
+                        )
+                    }
+                }
+
+                is ScanState.Scanning -> {
+                    ScanningContent(
+                        scanState = scanState as ScanState.Scanning,
+                        notesFiles = notesFiles,
+                        otherFiles = otherFiles
+                    )
+                }
+
+                is ScanState.Completed -> {
+                    // Show content with tabs after scan completion
+                    ContentTabs(
+                        pagerState = pagerState,
+                        tabs = tabs,
+                        notesFiles = notesFiles,
+                        otherFiles = otherFiles,
+                        viewModel = viewModel,
+                        showConfidenceScores = showConfidenceScores,
+                        isGridView = isGridView,
+                        coroutineScope = coroutineScope
+                    )
+                }
+
+                is ScanState.Error -> {
+                    ErrorStateContent(
+                        errorMessage = (scanState as ScanState.Error).message,
+                        onRetry = { viewModel.scanWhatsAppFolder() })
+                }
+            }
+
+            // Show error message if present
+            errorMessage?.let { error ->
+                ErrorMessageSnackbar(
+                    message = error, onDismiss = { viewModel.clearError() })
+            }
+
+            // Permission denied state
+            if (permissionDenied) {
+                PermissionDeniedContent()
+            }
+        }
+    }
+}
+
+private fun MainViewModel.clearError() {
+    this.clearError()
+}
+
+@Composable
+private fun EmptyStateContent(hasAllPermissions: Boolean) {
+    Box(
+        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
         ) {
-            if (isScanning) {
-                Box(
-                    modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = "Scanning and classifying files...",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "WhatSweep",
+                style = MaterialTheme.typography.headlineMedium,
+                textAlign = TextAlign.Center
+            )
 
-                        // Show processed file count
-                        Text(
-                            text = "Processed: ${scanProgress.filesProcessed} files",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+            Spacer(modifier = Modifier.height(16.dp))
 
-                        // Show classification counts
-                        Text(
-                            text = "Found: ${notesFiles.size} notes, ${otherFiles.size} other files",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+            Text(
+                text = "Scan and identify study notes in your WhatsApp media and local folders",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
 
-                        Spacer(modifier = Modifier.height(16.dp))
-                        androidx.compose.material3.LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(0.7f)
-                        )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Tap the 'Scan' button in the top bar to begin.",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+
+            if (!hasAllPermissions) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Note: You'll need to grant storage permissions when prompted.",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanningContent(
+    scanState: ScanState.Scanning, notesFiles: List<MediaFile>, otherFiles: List<MediaFile>
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = "Scanning and classifying files...",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))            // Show processed file count
+            Text(
+                text = "Processed: ${scanState.progress.filesProcessed} files",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Show classification counts
+            Text(
+                text = "Found: ${notesFiles.size} notes, ${otherFiles.size} other files",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (scanState.progress.currentDirectory.isNotEmpty()) {
+                Text(
+                    text = "Processing: ${scanState.progress.currentDirectory}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(0.7f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorStateContent(
+    errorMessage: String, onRetry: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = "Scan Error",
+                style = MaterialTheme.typography.headlineMedium,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.error
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(onClick = onRetry) {
+                Text("Retry Scan")
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionDeniedContent() {
+    val context = LocalContext.current
+
+    Box(
+        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = "Storage Permission Required",
+                style = MaterialTheme.typography.headlineMedium,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Storage permission is required to scan files. Please grant the permission in app settings.",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.error
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", context.packageName, null)
                     }
+                    context.startActivity(intent)
+                }) {
+                Text("Open App Settings")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentTabs(
+    pagerState: androidx.compose.foundation.pager.PagerState,
+    tabs: List<String>,
+    notesFiles: List<MediaFile>,
+    otherFiles: List<MediaFile>,
+    viewModel: MainViewModel,
+    showConfidenceScores: Boolean,
+    isGridView: Boolean,
+    coroutineScope: kotlinx.coroutines.CoroutineScope
+) {
+    TabRow(selectedTabIndex = pagerState.currentPage) {
+        tabs.forEachIndexed { index, title ->
+            Tab(selected = pagerState.currentPage == index, onClick = {
+                coroutineScope.launch {
+                    pagerState.animateScrollToPage(index)
                 }
-            } else if (permissionDenied) {
-                // Show permission denied message
-                Box(
-                    modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = "Storage Permission Required",
-                            style = MaterialTheme.typography.headlineMedium,
-                            textAlign = TextAlign.Center
-                        )
+            }, text = { Text(title) })
+        }
+    }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+    HorizontalPager(
+        state = pagerState,
+    ) { page ->
+        when (page) {
+            0 -> MediaGrid(
+                mediaFiles = notesFiles,
+                onItemClick = { viewModel.toggleSelection(it) },
+                showConfidenceScores = showConfidenceScores,
+                isGridView = isGridView
+            )
 
-                        Text(
-                            text = "Storage permission is required to scan files. Please grant the permission in app settings.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.error
-                        )
+            1 -> MediaGrid(
+                mediaFiles = otherFiles,
+                onItemClick = { viewModel.toggleSelection(it) },
+                showConfidenceScores = showConfidenceScores,
+                isGridView = isGridView
+            )
+        }
+    }
+}
 
-                        Spacer(modifier = Modifier.height(16.dp))
+@Composable
+private fun ErrorMessageSnackbar(
+    message: String, onDismiss: () -> Unit
+) {
+    LaunchedEffect(message) {
+        // Auto dismiss after 5 seconds
+        kotlinx.coroutines.delay(5000)
+        onDismiss()
+    }
 
-                        Button(
-                            onClick = {
-                                val intent =
-                                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = Uri.fromParts("package", context.packageName, null)
-                                    }
-                                context.startActivity(intent)
-                            }) {
-                            Text("Open App Settings")
-                        }
-                    }
-                }
-            } else if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
-                // Empty state - show welcome message and instructions
-                Box(
-                    modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = "WhatSweep",
-                            style = MaterialTheme.typography.headlineMedium,
-                            textAlign = TextAlign.Center
-                        )
+    // This would ideally be implemented using SnackbarHost, but for simplicity
+    // we'll show it as a surface at the bottom
+    Box(
+        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter
+    ) {
+        androidx.compose.material3.Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            color = MaterialTheme.colorScheme.errorContainer,
+            shape = MaterialTheme.shapes.small
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f)
+                )
 
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "Scan and identify study notes in your WhatsApp media and local folders",
-                            style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        Text(
-                            text = "Tap the 'Scan' button in the top bar to begin.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center
-                        )
-
-                        if (!hasAllPermissions) {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "Note: You'll need to grant storage permissions when prompted.",
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            } else {
-                TabRow(
-                    selectedTabIndex = pagerState.currentPage
-                ) {
-                    tabs.forEachIndexed { index, title ->
-                        Tab(selected = pagerState.currentPage == index, onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(index)
-                            }
-                        }, text = { Text(title) })
-                    }
-                }
-
-                HorizontalPager(
-                    state = pagerState, modifier = Modifier.weight(1f)
-                ) { page ->
-                    when (page) {
-                        0 -> MediaGrid(
-                            mediaFiles = notesFiles,
-                            onItemClick = { viewModel.toggleSelection(it) },
-                            showConfidenceScores = showConfidenceScores,
-                            isGridView = isGridView
-                        )
-
-                        1 -> MediaGrid(
-                            mediaFiles = otherFiles,
-                            onItemClick = { viewModel.toggleSelection(it) },
-                            showConfidenceScores = showConfidenceScores,
-                            isGridView = isGridView
-                        )
-                    }
+                androidx.compose.material3.TextButton(onClick = onDismiss) {
+                    Text("Dismiss")
                 }
             }
         }

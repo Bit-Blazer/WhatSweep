@@ -17,14 +17,16 @@
         tools:node="remove" />
 
     <!-- Storage permissions -->
+
+    <!-- Legacy external storage for Android 10 and below -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- Granular media permissions for Android 13+ -->
+    <!-- Granular media permissions for Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
-    <!-- For Android 10+ scoped storage -->
+    <!-- For Android 10+ (API 29+) scoped storage -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />

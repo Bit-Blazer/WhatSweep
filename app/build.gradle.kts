@@ -84,6 +84,9 @@ dependencies {
     // Coil for image loading
     implementation(libs.coil.compose)
 
+    // EXIF data handling for image orientation
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+
     // ViewModels for Compose
     implementation(libs.lifecycle.viewmodelCompose)
     // Permissions handling

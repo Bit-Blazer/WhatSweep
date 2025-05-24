@@ -1,23 +1,29 @@
 package com.bitblazer.whatsweep.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -26,21 +32,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bitblazer.whatsweep.util.PreferencesManager
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateUp: () -> Unit, modifier: Modifier = Modifier
+    onNavigateUp: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val prefsManager = remember { PreferencesManager(context) }
 
@@ -50,141 +63,312 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Settings") }, navigationIcon = {
-                IconButton(onClick = onNavigateUp) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Settings",
+                        modifier = Modifier.semantics {
+                            contentDescription = "Settings screen"
+                        }
+                    )
+                },
+                navigationIcon = {
+                    IconButton(
+                        onClick = onNavigateUp,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Navigate back to main screen"
+                        }
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
                 }
-            })
-        }) { paddingValues ->
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { paddingValues ->
         Column(
             modifier = modifier
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(16.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            Text(
-                text = "Scan Settings",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
+            // Scan Settings Section
+            SettingsSection(title = "Scan Settings") {
+                ScanSettingsCard(
+                    includePdfScanning = includePdfScanning,
+                    onIncludePdfScanningChange = { newValue ->
+                        includePdfScanning = newValue
+                        prefsManager.includePdfScanning = newValue
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = if (newValue) "PDF scanning enabled" else "PDF scanning disabled"
+                            )
+                        }
+                    },
+                    onClearCache = {
+                        coroutineScope.launch {
+                            try {
+                                prefsManager.clearClassificationCache()
+                                snackbarHostState.showSnackbar("Classification cache cleared successfully")
+                            } catch (e: Exception) {
+                                snackbarHostState.showSnackbar("Failed to clear cache: ${e.message}")
+                            }
+                        }
+                    }
+                )
+            }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // Classification Settings Section
+            SettingsSection(title = "Classification Settings") {
+                ClassificationSettingsCard(
+                    showConfidenceScores = showConfidenceScores,
+                    onShowConfidenceScoresChange = { newValue ->
+                        showConfidenceScores = newValue
+                        prefsManager.showConfidenceScores = newValue
+                    },
+                    confidenceThreshold = confidenceThreshold,
+                    onConfidenceThresholdChange = { newValue ->
+                        confidenceThreshold = newValue
+                        prefsManager.confidenceThreshold = newValue
+                    }
+                )
+            }
 
+            // About Section
+            SettingsSection(title = "About") {
+                AboutCard()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+        content()
+    }
+}
+
+@Composable
+private fun ScanSettingsCard(
+    includePdfScanning: Boolean,
+    onIncludePdfScanningChange: (Boolean) -> Unit,
+    onClearCache: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
             SettingsSwitchItem(
                 title = "Include PDF scanning",
                 description = "Convert PDF pages to images and analyze them",
                 checked = includePdfScanning,
-                onCheckedChange = {
-                    includePdfScanning = it
-                    prefsManager.includePdfScanning = it
-                })
+                onCheckedChange = onIncludePdfScanningChange
+            )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider()
 
-            androidx.compose.material3.Button(
-                onClick = {
-                    prefsManager.clearClassificationCache()
-                }, modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Clear Classification Cache")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Clear Classification Cache",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Text(
+                    text = "Clears the saved classification data. Next scan will process all files again.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedButton(
+                    onClick = onClearCache,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Clear Cache")
+                }
             }
+        }
+    }
+}
 
-            Text(
-                text = "Clears the saved classification data. Next scan will process all files again.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-
-            Text(
-                text = "Classification Settings",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
+@Composable
+private fun ClassificationSettingsCard(
+    showConfidenceScores: Boolean,
+    onShowConfidenceScoresChange: (Boolean) -> Unit,
+    confidenceThreshold: Float,
+    onConfidenceThresholdChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
             SettingsSwitchItem(
                 title = "Show confidence scores",
                 description = "Display classification confidence percentages on results screen",
                 checked = showConfidenceScores,
-                onCheckedChange = {
-                    showConfidenceScores = it
-                    prefsManager.showConfidenceScores = it
-                })
+                onCheckedChange = onShowConfidenceScoresChange
+            )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider()
 
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Confidence Threshold", style = MaterialTheme.typography.titleMedium
+                        text = "Confidence Threshold",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
                     )
-
-                    Spacer(modifier = Modifier.weight(1f))
 
                     Text(
                         text = "${(confidenceThreshold * 100).roundToInt()}%",
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
 
                 Text(
                     text = "Minimum confidence level to classify an item as a note",
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
                 Slider(
-                    value = confidenceThreshold, onValueChange = {
-                        confidenceThreshold = it
-                        prefsManager.confidenceThreshold = it
-                    }, valueRange = 0.5f..0.95f, steps = 8, modifier = Modifier.fillMaxWidth()
+                    value = confidenceThreshold,
+                    onValueChange = onConfidenceThresholdChange,
+                    valueRange = 0.5f..0.95f,
+                    steps = 8,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            contentDescription =
+                                "Confidence threshold slider, currently ${(confidenceThreshold * 100).roundToInt()} percent"
+                        }
                 )
 
                 Row(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
                         text = "Lower (more inclusive)",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Spacer(modifier = Modifier.weight(1f))
 
                     Text(
                         text = "Higher (more selective)",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(16.dp))
+@Composable
+private fun AboutCard(modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "About WhatSweep",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+
             Text(
-                text = "About",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
+                text = "WhatSweep is an offline app for identifying and managing handwritten notes among your media files. It uses a custom TensorFlow Lite model to classify images and PDF pages.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
             Text(
-                text = "WhatSweep is an offline app for identifying and managing handwritten notes among your media files. It uses a custom TensorFlow Lite model to classify images and PDF pages. All processing happens on your device, and no data is sent to external servers.",
-                style = MaterialTheme.typography.bodyMedium
+                text = "🔒 All processing happens on your device, and no data is sent to external servers.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider()
 
-            Text(
-                text = "Version 1.0", style = MaterialTheme.typography.bodyMedium
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Version",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = "1.0.0",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
     }
 }
@@ -198,21 +382,31 @@ fun SettingsSwitchItem(
     modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription =
+                    "$title: ${if (checked) "enabled" else "disabled"}. $description"
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = title, style = MaterialTheme.typography.titleMedium
+                text = title,
+                style = MaterialTheme.typography.titleMedium
             )
 
             Text(
                 text = description,
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
         Switch(
-            checked = checked, onCheckedChange = onCheckedChange
+            checked = checked,
+            onCheckedChange = onCheckedChange
         )
     }
 }

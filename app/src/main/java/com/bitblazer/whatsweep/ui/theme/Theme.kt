@@ -88,13 +88,16 @@ private val DarkColorScheme = darkColorScheme(
 
 @Composable
 fun AppTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable() () -> Unit
+    darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit
 ) {
-    // Dynamic color is available on Android 12+
+    // Dynamic color is available on Android 12+ (API 31+)
     val dynamicColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val colorScheme = when {
+        // Use dynamic colors if supported
         dynamicColor && darkTheme -> dynamicDarkColorScheme(LocalContext.current)
         dynamicColor && !darkTheme -> dynamicLightColorScheme(LocalContext.current)
+
+        // Fall back to custom theme colors
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }

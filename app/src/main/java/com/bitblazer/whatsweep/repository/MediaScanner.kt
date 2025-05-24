@@ -10,236 +10,354 @@ import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.graphics.createBitmap
+import androidx.core.net.toUri
 import com.bitblazer.whatsweep.ml.ClassifierService
 import com.bitblazer.whatsweep.model.Classification
 import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.util.PreferencesManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.yield
 import java.io.File
-import java.io.IOException
+import kotlin.coroutines.coroutineContext
 
+/**
+ * Service responsible for scanning WhatsApp media directories and classifying images.
+ *
+ * Handles:
+ * - Multi-directory scanning across different Android versions
+ * - ML-based image classification with caching
+ * - PDF thumbnail generation and classification
+ * - Memory-efficient processing with cancellation support
+ * - Proper resource management for PDF rendering
+ *
+ * Architecture: Repository pattern with reactive Flow-based API
+ */
 class MediaScanner(private val context: Context) {
-
-    private val classifierService = ClassifierService(context)
-    private val preferencesManager =
-        PreferencesManager(context)    // Cache to track processed files within a single scanning session
-    private val processedFilesInSession = mutableSetOf<String>()
 
     companion object {
         private const val TAG = "MediaScanner"
         private const val WHATSAPP_IMAGES_DIR = "WhatsApp Images"
         private const val WHATSAPP_DOCUMENTS_DIR = "WhatsApp Documents"
-        private const val MAX_PDF_SAMPLE_PAGES = 5 // Maximum number of pages to sample from a PDF
+        private const val MAX_PDF_SAMPLE_PAGES = 5 // Maximum pages to sample for classification
+        private const val THUMBNAIL_SIZE = 512 // PDF thumbnail dimensions
+
+        // Supported image formats for classification
+        private val SUPPORTED_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "bmp")
     }
 
+    // Dependencies with proper lifecycle management
+    private val classifierService = ClassifierService(context)
+    private val preferencesManager = PreferencesManager(context)
+
+    // Session cache to prevent duplicate processing within single scan
+    private val processedFilesInSession = mutableSetOf<String>()
+
     /**
-     * Main entry point to scan WhatsApp media folders
+     * Main entry point for scanning WhatsApp media folders.
+     *
+     * Returns a Flow of MediaFile objects as they are discovered and classified.
+     * Supports cancellation and provides efficient memory usage through streaming.
+     *
+     * @return Flow<MediaFile> Stream of classified media files
      */
     fun scanWhatsAppFolder(): Flow<MediaFile> = flow {
         Log.d(TAG, "Starting WhatsApp folder scan")
 
-        // Clear the in-session cache at the start of each scan
-        processedFilesInSession.clear()
+        try {
+            // Clear session cache for fresh scan
+            processedFilesInSession.clear()
 
-        // Load cached file paths
-        val cachedNotes = preferencesManager.getClassifiedNotesFiles()
-        val cachedOthers = preferencesManager.getClassifiedOtherFiles()
+            // Load cached classifications to avoid re-processing
+            val cachedNotes = preferencesManager.getClassifiedNotesFiles()
+            val cachedOthers = preferencesManager.getClassifiedOtherFiles()
 
-        // Find all possible WhatsApp media directories based on Android version
-        val whatsAppMediaDirs = getWhatsAppMediaDirectories()
+            // Discover all available WhatsApp media directories
+            val whatsAppMediaDirs = getWhatsAppMediaDirectories()
 
-        if (whatsAppMediaDirs.isEmpty()) {
-            Log.w(TAG, "No WhatsApp media directories found")
-            return@flow
-        }
-
-        var foundFiles = false
-        // Track new classifications with their confidence values
-        val newNotes = mutableMapOf<String, Float>()
-        val newOther = mutableMapOf<String, Float>()
-
-        // Try each possible directory until we find media files
-        for (mediaDir in whatsAppMediaDirs) {
-            Log.d(TAG, "Checking WhatsApp media directory: ${mediaDir.absolutePath}")
-
-            // Scan Images subdirectory and all its subdirectories
-            val imagesDir = File(mediaDir, WHATSAPP_IMAGES_DIR)
-            if (imagesDir.exists() && imagesDir.isDirectory) {
-                Log.d(TAG, "Scanning images in: ${imagesDir.absolutePath}")
-
-                // Scan for new images
-                scanDirectoryRecursively(
-                    imagesDir, true, cachedNotes, cachedOthers
-                ).collect { mediaFile ->
-                    foundFiles = true
-
-                    // Track the classification for saving to cache later
-                    if (mediaFile.isNotes) {
-                        newNotes[mediaFile.key] = mediaFile.classification!!.confidence
-                    } else {
-                        newOther[mediaFile.key] = mediaFile.classification!!.confidence
-
-                    }
-
-                    emit(mediaFile)
-                }
-
-                // Emit cached images that still exist
-                emitCachedFiles(imagesDir, true, cachedNotes, cachedOthers).collect { mediaFile ->
-                    foundFiles = true
-                    emit(mediaFile)
-                }
+            if (whatsAppMediaDirs.isEmpty()) {
+                Log.w(TAG, "No WhatsApp media directories found")
+                return@flow
             }
 
-            // Scan Documents subdirectory and all its subdirectories (if PDF scanning is enabled)
-            if (preferencesManager.includePdfScanning) {
-                val documentsDir = File(mediaDir, WHATSAPP_DOCUMENTS_DIR)
-                if (documentsDir.exists() && documentsDir.isDirectory) {
-                    Log.d(TAG, "Scanning documents in: ${documentsDir.absolutePath}")
+            var foundFiles = false
+            val newClassifications = NewClassificationCache()
 
-                    // Only scan PDFs
+            // Process each discovered directory
+            for (mediaDir in whatsAppMediaDirs) {
+                // Check for cancellation
+                if (!coroutineContext.isActive) {
+                    Log.d(TAG, "Scan cancelled")
+                    break
+                }
+
+                Log.d(TAG, "Scanning WhatsApp media directory: ${mediaDir.absolutePath}")
+
+                // Scan Images subdirectory
+                val imagesDir = File(mediaDir, WHATSAPP_IMAGES_DIR)
+                if (imagesDir.exists() && imagesDir.isDirectory) {
+                    foundFiles = true
+                    Log.d(TAG, "Processing images in: ${imagesDir.absolutePath}")
+
+                    // Process new images
                     scanDirectoryRecursively(
-                        documentsDir, false, cachedNotes, cachedOthers
+                        directory = imagesDir,
+                        isImagesDir = true,
+                        cachedNotes = cachedNotes,
+                        cachedOthers = cachedOthers,
+                        newClassifications = newClassifications
                     ).collect { mediaFile ->
-                        foundFiles = true
+                        emit(mediaFile)
+                        yield() // Allow cancellation
+                    }
 
-                        // Track the classification for saving to cache later
-                        if (mediaFile.isNotes) {
-                            newNotes[mediaFile.key] = mediaFile.classification!!.confidence
-                        } else {
-                            newOther[mediaFile.key] = mediaFile.classification!!.confidence
+                    // Emit cached images that still exist
+                    emitCachedFiles(
+                        directory = imagesDir,
+                        isImagesDir = true,
+                        cachedNotes = cachedNotes,
+                        cachedOthers = cachedOthers
+                    ).collect { mediaFile ->
+                        emit(mediaFile)
+                        yield() // Allow cancellation
+                    }
+                }
+
+                // Scan Documents subdirectory (PDFs) if enabled
+                if (preferencesManager.includePdfScanning) {
+                    val documentsDir = File(mediaDir, WHATSAPP_DOCUMENTS_DIR)
+                    if (documentsDir.exists() && documentsDir.isDirectory) {
+                        foundFiles = true
+                        Log.d(TAG, "Processing documents in: ${documentsDir.absolutePath}")
+
+                        // Process new PDFs
+                        scanDirectoryRecursively(
+                            directory = documentsDir,
+                            isImagesDir = false,
+                            cachedNotes = cachedNotes,
+                            cachedOthers = cachedOthers,
+                            newClassifications = newClassifications
+                        ).collect { mediaFile ->
+                            emit(mediaFile)
+                            yield() // Allow cancellation
                         }
 
-                        emit(mediaFile)
-                    }
-
-                    // Emit cached PDFs that still exist
-                    emitCachedFiles(
-                        documentsDir, false, cachedNotes, cachedOthers
-                    ).collect { mediaFile ->
-                        foundFiles = true
-                        emit(mediaFile)
+                        // Emit cached PDFs that still exist
+                        emitCachedFiles(
+                            directory = documentsDir,
+                            isImagesDir = false,
+                            cachedNotes = cachedNotes,
+                            cachedOthers = cachedOthers
+                        ).collect { mediaFile ->
+                            emit(mediaFile)
+                            yield() // Allow cancellation
+                        }
                     }
                 }
             }
 
-            if (foundFiles) {
-                Log.d(TAG, "Successfully found and processed files in WhatsApp directory")
+            if (!foundFiles) {
+                Log.w(TAG, "No WhatsApp media files found in any location")
             }
-        }
 
-        if (!foundFiles) {
-            Log.w(TAG, "No WhatsApp media files found in any location")
-        }
+            // Save new classifications to cache
+            saveNewClassifications(newClassifications, cachedNotes, cachedOthers)
 
-        // Update the cache with new classifications
-        val updatedNotes = cachedNotes.toMutableMap().apply {
-            putAll(newNotes)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during WhatsApp folder scan", e)
+            throw e
         }
-        val updatedOthers = cachedOthers.toMutableMap().apply {
-            putAll(newOther)
-        }
-        preferencesManager.saveClassifiedNotesFiles(updatedNotes)
-        preferencesManager.saveClassifiedOtherFiles(updatedOthers)
-
     }.flowOn(Dispatchers.IO)
 
     /**
-     * Gets all possible WhatsApp Media directory locations based on Android version
+     * Helper class to track new classifications during a scan session.
+     */
+    private class NewClassificationCache {
+        val notes = mutableMapOf<String, Float>()
+        val others = mutableMapOf<String, Float>()
+
+        fun addClassification(filePath: String, classification: Classification) {
+            if (classification.label == "notes") {
+                notes[filePath] = classification.confidence
+            } else {
+                others[filePath] = classification.confidence
+            }
+        }
+    }
+
+    /**
+     * Saves new classifications to persistent cache.
+     */
+    private fun saveNewClassifications(
+        newClassifications: NewClassificationCache,
+        existingNotes: Map<String, Float>,
+        existingOthers: Map<String, Float>
+    ) {
+        try {
+            val updatedNotes = existingNotes.toMutableMap().apply {
+                putAll(newClassifications.notes)
+            }
+            val updatedOthers = existingOthers.toMutableMap().apply {
+                putAll(newClassifications.others)
+            }
+
+            preferencesManager.saveClassifiedNotesFiles(updatedNotes)
+            preferencesManager.saveClassifiedOtherFiles(updatedOthers)
+
+            Log.d(
+                TAG, "Saved ${newClassifications.notes.size} new note classifications, " +
+                        "${newClassifications.others.size} new other classifications"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save new classifications", e)
+        }
+    }
+
+    /**
+     * Gets all possible WhatsApp Media directory locations based on Android version.
+     * Handles the various storage locations across different Android versions and OEM customizations.
      */
     private fun getWhatsAppMediaDirectories(): List<File> {
         val dirs = mutableListOf<File>()
-
-        // Get the external storage directory
         val externalStorageDir = Environment.getExternalStorageDirectory()
 
         when {
-            // Android 10+ (API 29+) - Scoped Storage
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                // Android/media/com.whatsapp/WhatsApp/Media
+            // Android 11+ (API 30+) - Enhanced Scoped Storage
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                // Primary: storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media
                 dirs.add(File(externalStorageDir, "Android/media/com.whatsapp/WhatsApp/Media"))
+                // Fallback: storage/emulated/0/WhatsApp/Media (for legacy apps still using old structure)
+                dirs.add(File(externalStorageDir, "WhatsApp/Media"))
+            }
+
+            // Android 10 (API 29) - Initial Scoped Storage
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                // Primary: storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media
+                dirs.add(File(externalStorageDir, "Android/media/com.whatsapp/WhatsApp/Media"))
+                // Fallback: storage/emulated/0/WhatsApp/Media (for requestLegacyExternalStorage)
+                dirs.add(File(externalStorageDir, "WhatsApp/Media"))
             }
 
             // Android Nougat to Pie (API 24-28) - Legacy External Storage
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.N -> {
-                // Primary: WhatsApp/Media
+                // Primary: storage/emulated/0/WhatsApp/Media
                 dirs.add(File(externalStorageDir, "WhatsApp/Media"))
-                // Secondary: Android/media/com.whatsapp/WhatsApp/Media (for some devices)
+                // Some OEMs moved to scoped storage early
+                // Secondary: storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media
                 dirs.add(File(externalStorageDir, "Android/media/com.whatsapp/WhatsApp/Media"))
             }
 
             // Android Marshmallow and below (API 23 and lower)
             else -> {
-                // WhatsApp/Media
+                // storage/emulated/0/WhatsApp/Media
                 dirs.add(File(externalStorageDir, "WhatsApp/Media"))
             }
         }
 
-        // Filter out directories that don't exist
-        return dirs.filter { it.exists() && it.isDirectory }
+        // Filter out directories that don't exist and log found directories
+        val existingDirs = dirs.filter { it.exists() && it.isDirectory }
+        existingDirs.forEach { dir ->
+            Log.d(TAG, "Found WhatsApp media directory: ${dir.absolutePath}")
+        }
+
+        if (existingDirs.isEmpty()) {
+            Log.w(
+                TAG,
+                "No WhatsApp media directories found. Checked locations: ${dirs.map { it.absolutePath }}"
+            )
+        }
+
+        return existingDirs
     }
 
     /**
-     * Recursively scans a directory and all its subdirectories for new media files
-     * Skips files that are already in the cache
+     * Recursively scans a directory for media files, processing new files through ML classification.
+     *
+     * @param directory Directory to scan
+     * @param isImagesDir True if scanning images directory, false for documents
+     * @param cachedNotes Previously classified notes files
+     * @param cachedOthers Previously classified other files
+     * @param newClassifications Cache for new classifications in this session
      */
     private fun scanDirectoryRecursively(
         directory: File,
         isImagesDir: Boolean,
         cachedNotes: Map<String, Float>,
-        cachedOthers: Map<String, Float>
+        cachedOthers: Map<String, Float>,
+        newClassifications: NewClassificationCache
     ): Flow<MediaFile> = flow {
-        val files = directory.listFiles() ?: emptyArray()
+        val files = directory.listFiles() ?: run {
+            Log.w(TAG, "Cannot list files in directory: ${directory.absolutePath}")
+            return@flow
+        }
 
         for (file in files) {
+            // Check for cancellation
+            if (!coroutineContext.isActive) {
+                Log.d(TAG, "Directory scan cancelled")
+                break
+            }
+
             if (file.isDirectory) {
                 // Recursively scan subdirectories
                 scanDirectoryRecursively(
-                    file, isImagesDir, cachedNotes, cachedOthers
+                    directory = file,
+                    isImagesDir = isImagesDir,
+                    cachedNotes = cachedNotes,
+                    cachedOthers = cachedOthers,
+                    newClassifications = newClassifications
                 ).collect { mediaFile ->
                     emit(mediaFile)
                 }
             } else {
-                // Skip files we've already processed in this session
-                // This prevents duplicate entries from the same file
-                // Now we use just the file path for both images and PDFs since we're treating PDFs as whole documents
+                // Process individual files
                 val filePath = file.absolutePath
+
+                // Skip already processed files in this session
                 if (processedFilesInSession.contains(filePath)) {
                     continue
                 }
 
-                // Skip files we've already classified in previous sessions
+                // Skip already cached files
                 if (cachedNotes.containsKey(filePath) || cachedOthers.containsKey(filePath)) {
                     continue
                 }
 
-                // Process files based on directory type
-                if (isImagesDir) {
-                    // In images directory, we only care about image files
-                    if (isImageFile(file)) {
-                        processImageFile(file)?.let { mediaFile ->
-                            processedFilesInSession.add(mediaFile.key)
-                            emit(mediaFile)
+                // Process based on directory type and file extension
+                try {
+                    val mediaFile = when {
+                        isImagesDir && isImageFile(file) -> {
+                            processImageFile(file)
                         }
-                    }
-                } else {
-                    // In documents directory, only process PDF files
-                    if (file.extension.equals("pdf", ignoreCase = true)) {
-                        processPdfFile(file).collect { mediaFile ->
-                            processedFilesInSession.add(mediaFile.key)
-                            emit(mediaFile)
+
+                        !isImagesDir && isPdfFile(file) -> {
+                            processPdfFile(file).firstOrNull()
                         }
+
+                        else -> null
                     }
+
+                    if (mediaFile != null) {
+                        processedFilesInSession.add(filePath)
+                        mediaFile.classification?.let { classification ->
+                            newClassifications.addClassification(filePath, classification)
+                        }
+                        emit(mediaFile)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing file: $filePath", e)
+                    // Continue processing other files instead of failing completely
                 }
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     /**
-     * Retrieves cached files from a directory without running classification again
+     * Emits cached files that still exist on the filesystem.
      */
     private fun emitCachedFiles(
         directory: File,
@@ -247,340 +365,306 @@ class MediaScanner(private val context: Context) {
         cachedNotes: Map<String, Float>,
         cachedOthers: Map<String, Float>
     ): Flow<MediaFile> = flow {
-        val files = directory.listFiles() ?: emptyArray()
+        val files = directory.listFiles() ?: return@flow
 
         for (file in files) {
+            // Check for cancellation
+            if (!coroutineContext.isActive) break
+
             if (file.isDirectory) {
                 // Recursively process subdirectories
                 emitCachedFiles(file, isImagesDir, cachedNotes, cachedOthers).collect { mediaFile ->
                     emit(mediaFile)
                 }
             } else {
-                // Check if this file is in our cache
-                if (isImagesDir && isImageFile(file)) {
-                    val filePath = file.absolutePath
+                val filePath = file.absolutePath
 
-                    // Skip files already processed in this session
-                    if (processedFilesInSession.contains(filePath)) {
-                        continue
-                    }
+                // Skip already processed files in this session
+                if (processedFilesInSession.contains(filePath)) {
+                    continue
+                }
 
-                    val notesConfidence = cachedNotes[filePath]
-                    val othersConfidence = cachedOthers[filePath]
-
-                    if (notesConfidence != null) {
-                        val mediaFile = createMediaFile(file, isImage = true).apply {
-                            classification = Classification("notes", notesConfidence)
-                            processedFilesInSession.add(key)
+                // Check if file is in cache and create MediaFile
+                try {
+                    val mediaFile = when {
+                        isImagesDir && isImageFile(file) -> {
+                            createCachedImageFile(file, cachedNotes, cachedOthers)
                         }
-                        emit(mediaFile)
-                    } else if (othersConfidence != null) {
-                        val mediaFile = createMediaFile(file, isImage = true).apply {
-                            classification = Classification("not_notes", othersConfidence)
-                            processedFilesInSession.add(key)
-                        }
-                        emit(mediaFile)
-                    }
-                } else if (!isImagesDir && file.extension.equals("pdf", ignoreCase = true)) {
-                    // For PDFs, check if the whole document is in the cache (now using just the file path)
-                    val filePath = file.absolutePath
 
-                    // Skip files already processed in this session
-                    if (processedFilesInSession.contains(filePath)) {
-                        continue
+                        !isImagesDir && isPdfFile(file) -> {
+                            createCachedPdfFile(file, cachedNotes, cachedOthers)
+                        }
+
+                        else -> null
                     }
-                    if (cachedNotes.containsKey(filePath) || cachedOthers.containsKey(filePath)) {
-                        // Try to generate a thumbnail for the PDF
-                        var thumbnailUri: Uri? = null
-                        try {
-                            val fileDescriptor =
-                                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+
+                    if (mediaFile != null) {
+                        processedFilesInSession.add(filePath)
+                        emit(mediaFile)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error creating cached file: $filePath", e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates a MediaFile from cached image classification data.
+     */
+    private fun createCachedImageFile(
+        file: File,
+        cachedNotes: Map<String, Float>,
+        cachedOthers: Map<String, Float>
+    ): MediaFile? {
+        val filePath = file.absolutePath
+
+        return when {
+            cachedNotes.containsKey(filePath) -> {
+                createMediaFile(file, isImage = true).apply {
+                    classification = Classification("notes", cachedNotes[filePath]!!)
+                }
+            }
+
+            cachedOthers.containsKey(filePath) -> {
+                createMediaFile(file, isImage = true).apply {
+                    classification = Classification("not_notes", cachedOthers[filePath]!!)
+                }
+            }
+
+            else -> null
+        }
+    }
+
+    /**
+     * Creates a MediaFile from cached PDF classification data.
+     */
+    private fun createCachedPdfFile(
+        file: File,
+        cachedNotes: Map<String, Float>,
+        cachedOthers: Map<String, Float>
+    ): MediaFile? {
+        val filePath = file.absolutePath
+
+        val classification = when {
+            cachedNotes.containsKey(filePath) -> Classification("notes", cachedNotes[filePath]!!)
+            cachedOthers.containsKey(filePath) -> Classification(
+                "not_notes",
+                cachedOthers[filePath]!!
+            )
+
+            else -> return null
+        }
+
+        // Generate thumbnail for PDF
+        val thumbnailUri = generatePdfThumbnail(file)
+
+        return createMediaFile(file, isImage = false, thumbnailUri = thumbnailUri).apply {
+            this.classification = classification
+        }
+    }
+
+    /**
+     * Checks if a file is a supported image format.
+     */
+    private fun isImageFile(file: File): Boolean {
+        return SUPPORTED_IMAGE_EXTENSIONS.contains(file.extension.lowercase())
+    }
+
+    /**
+     * Checks if a file is a PDF document.
+     */
+    private fun isPdfFile(file: File): Boolean {
+        return file.extension.equals("pdf", ignoreCase = true)
+    }
+
+    /**
+     * Processes an image file through ML classification.
+     */
+    private suspend fun processImageFile(file: File): MediaFile? {
+        return try {
+            val mediaFile = createMediaFile(file, isImage = true)
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+
+            if (bitmap != null) {
+                val classification = classifierService.classifyImage(bitmap)
+                mediaFile.apply { this.classification = classification }
+            } else {
+                Log.w(TAG, "Failed to decode image: ${file.name}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing image file: ${file.name}", e)
+            null
+        }
+    }
+
+    /**
+     * Processes a PDF file by sampling pages for classification.
+     */
+    private fun processPdfFile(file: File): Flow<MediaFile> = flow {
+        try {
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                .use { fileDescriptor ->
+                    PdfRenderer(fileDescriptor).use { renderer ->
+                        if (renderer.pageCount == 0) {
+                            Log.w(TAG, "PDF has no pages: ${file.name}")
+                            return@flow
+                        }
+
+                        // Sample pages for classification (up to MAX_PDF_SAMPLE_PAGES)
+                        val pagesToSample = minOf(renderer.pageCount, MAX_PDF_SAMPLE_PAGES)
+                        val classifications = mutableListOf<Classification>()
+
+                        // Generate thumbnail from first page
+                        val thumbnailUri = generatePdfThumbnail(file)
+
+                        for (pageIndex in 0 until pagesToSample) {
                             try {
-                                PdfRenderer(fileDescriptor).use { renderer ->
-                                    if (renderer.pageCount > 0) {
-                                        renderer.openPage(0).use { page ->
-                                            val bitmap = createBitmap(page.width, page.height)
-                                            page.render(
-                                                bitmap,
-                                                null,
-                                                null,
-                                                PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
-                                            )
-                                            thumbnailUri = savePdfThumbnail(file.name, bitmap)
-                                        }
-                                    }
+                                renderer.openPage(pageIndex).use { page ->
+                                    val bitmap = createBitmap(
+                                        THUMBNAIL_SIZE,
+                                        THUMBNAIL_SIZE,
+                                        Bitmap.Config.ARGB_8888
+                                    )
+                                    page.render(
+                                        bitmap,
+                                        null,
+                                        null,
+                                        PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                                    )
+
+                                    val classification = classifierService.classifyImage(bitmap)
+                                    classifications.add(classification)
+                                    bitmap.recycle()
                                 }
-                            } finally {
-                                fileDescriptor.close()
+                            } catch (e: Exception) {
+                                Log.w(
+                                    TAG,
+                                    "Error processing PDF page $pageIndex for ${file.name}",
+                                    e
+                                )
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error creating thumbnail for cached PDF ${file.name}", e)
                         }
 
-                        // Create appropriate classification with stored confidence
-                        val classification = if (cachedNotes.containsKey(filePath)) {
-                            Classification("notes", cachedNotes[filePath] ?: 0.0f)
-                        } else {
-                            Classification("not_notes", cachedOthers[filePath] ?: 0.0f)
-                        }
+                        // Determine overall classification based on majority vote
+                        val finalClassification = determineOverallClassification(classifications)
 
-                        // Create a media file for the whole PDF document
                         val mediaFile = createMediaFile(
                             file,
                             isImage = false,
-                            isPdf = true,
-                            pdfPage = -1, // -1 means whole document
                             thumbnailUri = thumbnailUri
                         ).apply {
-                            this.classification = classification
-                            processedFilesInSession.add(this.key)
+                            classification = finalClassification
                         }
+
                         emit(mediaFile)
                     }
                 }
-            }
-        }
-    }.flowOn(Dispatchers.IO)
-
-    /**
-     * Check if a file is an image based on extension
-     */
-    private fun isImageFile(file: File): Boolean {
-        val extension = file.extension.lowercase()
-        return extension == "jpg" || extension == "jpeg" || extension == "png"
-    }
-
-    /**
-     * Process an image file and classify it
-     */
-    private suspend fun processImageFile(file: File): MediaFile? {
-        try {
-            // Create media file metadata
-            val mediaFile = createMediaFile(file, isImage = true)
-
-            // Load and classify the bitmap
-            loadBitmap(file)?.let { bitmap ->
-                val classification = classifierService.classifyImage(bitmap)
-                mediaFile.classification = classification
-            }
-
-            return mediaFile
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing image file: ${file.name}", e)
-            return null
+            Log.e(TAG, "Error processing PDF file: ${file.name}", e)
         }
     }
 
     /**
-     * Load a bitmap from a file
+     * Generates a thumbnail for a PDF file.
      */
-    private fun loadBitmap(file: File): Bitmap? {
+    private fun generatePdfThumbnail(file: File): Uri? {
         return try {
-            val uri = Uri.fromFile(file)
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                BitmapFactory.decodeStream(inputStream)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading bitmap from: ${file.name}", e)
-            null
-        }
-    }
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                .use { fileDescriptor ->
+                    PdfRenderer(fileDescriptor).use { renderer ->
+                        if (renderer.pageCount > 0) {
+                            renderer.openPage(0).use { page ->
+                                val bitmap = createBitmap(
+                                    THUMBNAIL_SIZE,
+                                    THUMBNAIL_SIZE,
+                                    Bitmap.Config.ARGB_8888
+                                )
+                                page.render(
+                                    bitmap,
+                                    null,
+                                    null,
+                                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                                )
 
-    /**
-     * Process a PDF file and classify it as a whole document
-     * Samples up to MAX_PDF_SAMPLE_PAGES random pages and makes a classification decision
-     * based on the majority of sampled pages
-     *
-     * Handles password-protected PDFs by catching security exceptions
-     * Note: Password protected PDFs will be skipped to avoid app crashes.
-     * When Android's PdfRenderer tries to open a password-protected PDF,
-     * it throws a SecurityException which we catch and log.
-     */
-    private fun processPdfFile(pdfFile: File): Flow<MediaFile> = flow {
-        try {
-            Log.d(TAG, "Processing PDF file: ${pdfFile.name}")
-            val fileDescriptor =
-                ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
-
-            try {
-                PdfRenderer(fileDescriptor).use { renderer ->
-                    val pageCount = renderer.pageCount
-
-                    // Skip empty PDFs
-                    if (pageCount == 0) {
-                        Log.d(TAG, "Skipping empty PDF: ${pdfFile.name}")
-                        return@flow
-                    }
-
-                    // Determine how many pages to sample (up to MAX_PDF_SAMPLE_PAGES)
-                    val pagesToSample = minOf(MAX_PDF_SAMPLE_PAGES, pageCount)
-
-                    // Generate sample page indices - if few pages, just use them all in order
-                    val samplePageIndices = if (pageCount <= MAX_PDF_SAMPLE_PAGES) {
-                        (0 until pageCount).toList()
-                    } else {
-                        // Sample pages at regular intervals to get representative coverage
-                        (0 until pageCount).filter { it % (pageCount / pagesToSample) == 0 }
-                            .take(pagesToSample)
-                    }
-
-                    Log.d(TAG, "Sampling ${samplePageIndices.size} pages from ${pdfFile.name}")
-
-                    // Track classifications for voting
-                    var notesCount = 0
-                    var otherCount = 0
-                    var highestConfidence = 0f
-                    var finalClassification: Classification? = null
-
-                    // Process each sampled page
-                    for (pageIndex in samplePageIndices) {
-                        renderer.openPage(pageIndex).use { page ->
-                            // Create bitmap of the PDF page
-                            val bitmap = createBitmap(page.width, page.height)
-                            page.render(
-                                bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
-                            )
-
-                            // Classify the bitmap
-                            val classification = classifierService.classifyImage(bitmap)
-
-                            // Count votes
-                            if (classification.label == "notes" && classification.confidence > preferencesManager.confidenceThreshold) {
-                                notesCount++
-
-                                // Track highest confidence classification
-                                if (classification.confidence > highestConfidence) {
-                                    highestConfidence = classification.confidence
-                                    finalClassification = classification
+                                // Save thumbnail to cache directory
+                                val thumbnailFile = File(
+                                    context.cacheDir,
+                                    "pdf_thumb_${file.nameWithoutExtension}_${System.currentTimeMillis()}.png"
+                                )
+                                thumbnailFile.outputStream().use { output ->
+                                    bitmap.compress(Bitmap.CompressFormat.PNG, 90, output)
                                 }
-                            } else {
-                                otherCount++
+                                bitmap.recycle()
 
-                                // If no "notes" classification has been found yet, store this one
-                                if (finalClassification == null || classification.confidence > highestConfidence) {
-                                    highestConfidence = classification.confidence
-                                    finalClassification = classification
-                                }
+                                thumbnailFile.toUri()
                             }
-                        }
-                    }                    // Create a thumbnail from the first page of the PDF
-                    var thumbnailBitmap: Bitmap? = null
-                    try {
-                        renderer.openPage(0).use { page ->
-                            thumbnailBitmap = createBitmap(page.width, page.height)
-                            page.render(
-                                thumbnailBitmap,
-                                null,
-                                null,
-                                PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error creating thumbnail for PDF ${pdfFile.name}", e)
+                        } else null
                     }
-
-                    // Save thumbnail to a file
-                    val thumbnailUri = if (thumbnailBitmap != null) {
-                        savePdfThumbnail(pdfFile.name, thumbnailBitmap!!)
-                    } else {
-                        null
-                    }
-
-                    // Create a single MediaFile for the entire PDF with the final classification
-                    // Use the majority vote to determine if it's notes or not
-                    val isNotesMajority = notesCount > otherCount
-
-                    // If we have a tied vote, use the highest confidence classification
-                    val finalLabel = if (isNotesMajority) "notes" else "not_notes"
-                    val mediaFile = createMediaFile(
-                        file = pdfFile,
-                        isImage = false,
-                        isPdf = true,
-                        pdfPage = -1, // No specific page, represents the whole document
-                        thumbnailUri = thumbnailUri
-                    )
-
-                    mediaFile.classification =
-                        finalClassification ?: Classification(finalLabel, 0.5f)
-
-                    Log.d(
-                        TAG,
-                        "PDF ${pdfFile.name} classified as $finalLabel with confidence ${mediaFile.confidencePercentage}"
-                    )
-                    emit(mediaFile)
                 }
-            } catch (_: SecurityException) {
-                // Handle password-protected PDFs
-                Log.w(TAG, "Skipping password-protected PDF: ${pdfFile.name}")
-            } catch (e: Exception) {
-                // Handle other errors during PDF rendering
-                Log.e(TAG, "Error rendering PDF: ${pdfFile.name}", e)
-            } finally {
-                try {
-                    fileDescriptor.close()
-                } catch (_: Exception) {
-                    // Ignore close errors
-                }
-            }
-        } catch (e: IOException) {
-            Log.e(TAG, "Error opening PDF file: ${pdfFile.name}", e)
-        }
-    }.flowOn(Dispatchers.IO)
-
-    /**
-     * Save a PDF thumbnail to the app's cache directory
-     * @param pdfName name of the source PDF file
-     * @param bitmap thumbnail bitmap to save
-     * @return Uri to the saved thumbnail, or null if saving failed
-     */
-    private fun savePdfThumbnail(pdfName: String, bitmap: Bitmap): Uri? {
-        return try {
-            // Create a unique filename for this PDF's thumbnail
-            val filename = "pdf_thumb_${pdfName.replace(".", "_")}.jpg"
-            val file = File(context.cacheDir, filename)
-
-            // Save the bitmap to the file as JPEG with 80% quality
-            file.outputStream().use { outputStream ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-                outputStream.flush()
-            }
-
-            // Return the URI to the saved thumbnail
-            Uri.fromFile(file)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save PDF thumbnail for $pdfName", e)
+            Log.w(TAG, "Failed to generate PDF thumbnail for ${file.name}", e)
             null
         }
     }
 
     /**
-     * Create a MediaFile object from a file
+     * Determines overall classification from multiple page classifications using majority vote.
+     */
+    private fun determineOverallClassification(classifications: List<Classification>): Classification {
+        if (classifications.isEmpty()) {
+            return Classification("unknown", 0.0f)
+        }
+
+        if (classifications.size == 1) {
+            return classifications.first()
+        }
+
+        // Group by label and calculate average confidence
+        val grouped = classifications.groupBy { it.label }
+        val averageConfidences = grouped.mapValues { (_, classificationList) ->
+            classificationList.map { it.confidence }.average().toFloat()
+        }
+
+        // Return the label with highest average confidence
+        val (label, confidence) = averageConfidences.maxByOrNull { it.value }
+            ?: return Classification("unknown", 0.0f)
+
+        return Classification(label, confidence)
+    }
+
+    /**
+     * Creates a MediaFile instance from a File with proper metadata.
      */
     private fun createMediaFile(
         file: File,
         isImage: Boolean,
-        isPdf: Boolean = false,
-        pdfPage: Int = -1,
         thumbnailUri: Uri? = null
     ): MediaFile {
         return MediaFile(
-            uri = Uri.fromFile(file),
+            uri = file.toUri(),
             file = file,
             name = file.name,
             path = file.absolutePath,
             size = file.length(),
             isImage = isImage,
-            isPdf = isPdf,
-            pdfPage = pdfPage,
-            confidenceThreshold = preferencesManager.confidenceThreshold,
+            isPdf = !isImage,
             thumbnailUri = thumbnailUri
         )
     }
 
     /**
-     * Clean up resources
+     * Releases resources when MediaScanner is no longer needed.
+     * Call this to prevent memory leaks.
      */
     fun onDestroy() {
-        classifierService.close()
+        try {
+            classifierService.release()
+            processedFilesInSession.clear()
+            Log.d(TAG, "MediaScanner resources released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing MediaScanner resources", e)
+        }
     }
 }
