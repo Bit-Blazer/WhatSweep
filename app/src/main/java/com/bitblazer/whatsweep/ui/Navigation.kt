@@ -6,13 +6,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.bitblazer.whatsweep.ui.screens.HomeScreen
 import com.bitblazer.whatsweep.ui.screens.ResultsScreen
 import com.bitblazer.whatsweep.ui.screens.SettingsScreen
 import com.bitblazer.whatsweep.viewmodel.MainViewModel
 
 sealed class Screen(val route: String) {
-    object Home : Screen("home")
     object Results : Screen("results")
     object Settings : Screen("settings")
 }
@@ -24,18 +22,12 @@ fun AppNavigation(
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(
-        navController = navController, startDestination = Screen.Home.route, modifier = modifier
+        navController = navController, startDestination = Screen.Results.route, modifier = modifier
     ) {
-        composable(Screen.Home.route) {
-            HomeScreen(
-                viewModel = mainViewModel,
-                onNavigateToResults = { navController.navigate(Screen.Results.route) },
-                onNavigateToSettings = { navController.navigate(Screen.Settings.route) })
-        }
-
         composable(Screen.Results.route) {
             ResultsScreen(
-                viewModel = mainViewModel, onNavigateUp = { navController.navigateUp() })
+                viewModel = mainViewModel,
+                onNavigateToSettings = { navController.navigate(Screen.Settings.route) })
         }
 
         composable(Screen.Settings.route) {

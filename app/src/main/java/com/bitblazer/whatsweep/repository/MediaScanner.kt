@@ -57,8 +57,9 @@ class MediaScanner(private val context: Context) {
         }
 
         var foundFiles = false
-        val newNotesFiles = mutableSetOf<String>()
-        val newOtherFiles = mutableSetOf<String>()
+        // Track new classifications with their confidence values
+        val newNotes = mutableMapOf<String, Float>()
+        val newOther = mutableMapOf<String, Float>()
 
         // Try each possible directory until we find media files
         for (mediaDir in whatsAppMediaDirs) {
@@ -77,9 +78,10 @@ class MediaScanner(private val context: Context) {
 
                     // Track the classification for saving to cache later
                     if (mediaFile.isNotes) {
-                        newNotesFiles.add(mediaFile.key)
+                        newNotes[mediaFile.key] = mediaFile.classification!!.confidence
                     } else {
-                        newOtherFiles.add(mediaFile.key)
+                        newOther[mediaFile.key] = mediaFile.classification!!.confidence
+
                     }
 
                     emit(mediaFile)
@@ -106,9 +108,9 @@ class MediaScanner(private val context: Context) {
 
                         // Track the classification for saving to cache later
                         if (mediaFile.isNotes) {
-                            newNotesFiles.add(mediaFile.key)
+                            newNotes[mediaFile.key] = mediaFile.classification!!.confidence
                         } else {
-                            newOtherFiles.add(mediaFile.key)
+                            newOther[mediaFile.key] = mediaFile.classification!!.confidence
                         }
 
                         emit(mediaFile)
@@ -134,8 +136,12 @@ class MediaScanner(private val context: Context) {
         }
 
         // Update the cache with new classifications
-        val updatedNotes = cachedNotes.toMutableSet().apply { addAll(newNotesFiles) }
-        val updatedOthers = cachedOthers.toMutableSet().apply { addAll(newOtherFiles) }
+        val updatedNotes = cachedNotes.toMutableMap().apply {
+            putAll(newNotes)
+        }
+        val updatedOthers = cachedOthers.toMutableMap().apply {
+            putAll(newOther)
+        }
         preferencesManager.saveClassifiedNotesFiles(updatedNotes)
         preferencesManager.saveClassifiedOtherFiles(updatedOthers)
 
@@ -181,7 +187,10 @@ class MediaScanner(private val context: Context) {
      * Skips files that are already in the cache
      */
     private fun scanDirectoryRecursively(
-        directory: File, isImagesDir: Boolean, cachedNotes: Set<String>, cachedOthers: Set<String>
+        directory: File,
+        isImagesDir: Boolean,
+        cachedNotes: Map<String, Float>,
+        cachedOthers: Map<String, Float>
     ): Flow<MediaFile> = flow {
         val files = directory.listFiles() ?: emptyArray()
 
@@ -203,7 +212,7 @@ class MediaScanner(private val context: Context) {
                 }
 
                 // Skip files we've already classified in previous sessions
-                if (cachedNotes.contains(filePath) || cachedOthers.contains(filePath)) {
+                if (cachedNotes.containsKey(filePath) || cachedOthers.containsKey(filePath)) {
                     continue
                 }
 
@@ -233,7 +242,10 @@ class MediaScanner(private val context: Context) {
      * Retrieves cached files from a directory without running classification again
      */
     private fun emitCachedFiles(
-        directory: File, isImagesDir: Boolean, cachedNotes: Set<String>, cachedOthers: Set<String>
+        directory: File,
+        isImagesDir: Boolean,
+        cachedNotes: Map<String, Float>,
+        cachedOthers: Map<String, Float>
     ): Flow<MediaFile> = flow {
         val files = directory.listFiles() ?: emptyArray()
 
@@ -253,15 +265,18 @@ class MediaScanner(private val context: Context) {
                         continue
                     }
 
-                    if (cachedNotes.contains(filePath)) {
+                    val notesConfidence = cachedNotes[filePath]
+                    val othersConfidence = cachedOthers[filePath]
+
+                    if (notesConfidence != null) {
                         val mediaFile = createMediaFile(file, isImage = true).apply {
-                            classification = Classification("notes", 1.0f)
+                            classification = Classification("notes", notesConfidence)
                             processedFilesInSession.add(key)
                         }
                         emit(mediaFile)
-                    } else if (cachedOthers.contains(filePath)) {
+                    } else if (othersConfidence != null) {
                         val mediaFile = createMediaFile(file, isImage = true).apply {
-                            classification = Classification("not_notes", 1.0f)
+                            classification = Classification("not_notes", othersConfidence)
                             processedFilesInSession.add(key)
                         }
                         emit(mediaFile)
@@ -274,7 +289,7 @@ class MediaScanner(private val context: Context) {
                     if (processedFilesInSession.contains(filePath)) {
                         continue
                     }
-                    if (cachedNotes.contains(filePath) || cachedOthers.contains(filePath)) {
+                    if (cachedNotes.containsKey(filePath) || cachedOthers.containsKey(filePath)) {
                         // Try to generate a thumbnail for the PDF
                         var thumbnailUri: Uri? = null
                         try {
@@ -302,11 +317,11 @@ class MediaScanner(private val context: Context) {
                             Log.e(TAG, "Error creating thumbnail for cached PDF ${file.name}", e)
                         }
 
-                        // Create appropriate classification
-                        val classification = if (cachedNotes.contains(filePath)) {
-                            Classification("notes", 1.0f)
+                        // Create appropriate classification with stored confidence
+                        val classification = if (cachedNotes.containsKey(filePath)) {
+                            Classification("notes", cachedNotes[filePath] ?: 0.0f)
                         } else {
-                            Classification("not_notes", 1.0f)
+                            Classification("not_notes", cachedOthers[filePath] ?: 0.0f)
                         }
 
                         // Create a media file for the whole PDF document
@@ -454,7 +469,7 @@ class MediaScanner(private val context: Context) {
                         renderer.openPage(0).use { page ->
                             thumbnailBitmap = createBitmap(page.width, page.height)
                             page.render(
-                                thumbnailBitmap!!,
+                                thumbnailBitmap,
                                 null,
                                 null,
                                 PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
@@ -494,7 +509,7 @@ class MediaScanner(private val context: Context) {
                     )
                     emit(mediaFile)
                 }
-            } catch (e: SecurityException) {
+            } catch (_: SecurityException) {
                 // Handle password-protected PDFs
                 Log.w(TAG, "Skipping password-protected PDF: ${pdfFile.name}")
             } catch (e: Exception) {
@@ -503,7 +518,7 @@ class MediaScanner(private val context: Context) {
             } finally {
                 try {
                     fileDescriptor.close()
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // Ignore close errors
                 }
             }

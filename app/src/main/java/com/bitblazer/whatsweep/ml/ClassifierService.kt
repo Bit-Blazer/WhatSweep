@@ -17,13 +17,16 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class ClassifierService(private val context: Context) {
+class ClassifierService(context: Context) {
+    companion object {
+        const val MODEL_NAME = "notes_classifier_quantized.tflite"
+        const val TAG = "ClassifierService"
+    }
 
-    private val TAG = "ClassifierService"
     private val preferencesManager = PreferencesManager(context)
 
     private val localModel =
-        LocalModel.Builder().setAssetFilePath("notes_classifier_quantized.tflite").build()
+        LocalModel.Builder().setAssetFilePath(MODEL_NAME).build()
 
     private val options: CustomImageLabelerOptions
         get() = CustomImageLabelerOptions.Builder(localModel)
@@ -37,7 +40,6 @@ class ClassifierService(private val context: Context) {
             // Preprocess the bitmap - resize and normalize manually
             val processedBitmap = preprocessBitmap(bitmap)
             val image = InputImage.fromBitmap(processedBitmap, 0)
-            //  Log.d(TAG, "Processing image of size ${processedBitmap.width}x${processedBitmap.height}")
 
             return@withContext suspendCancellableCoroutine { continuation ->
                 imageLabeler.process(image).addOnSuccessListener { labels ->
@@ -53,7 +55,7 @@ class ClassifierService(private val context: Context) {
                             )
                         )
                     } else {
-                        //    Log.d(TAG, "No labels returned by classifier")
+                        Log.d(TAG, "No labels returned by classifier")
                         continuation.resume(Classification("unknown", 0.0f))
                     }
                 }.addOnFailureListener { e ->
@@ -79,10 +81,6 @@ class ClassifierService(private val context: Context) {
         // 2. Create a copy of the bitmap to ensure it's in the right format (ARGB_8888)
         val processedBitmap = resizedBitmap.copy(Bitmap.Config.ARGB_8888, true)
 
-        // Most TensorFlow models require images to be between [0,1] or [-1,1]
-        // Unfortunately, we can't easily preprocess/normalize pixels here without a custom model
-        // We rely on the model to have proper metadata for preprocessing
-
         return processedBitmap
     }
 
@@ -90,9 +88,4 @@ class ClassifierService(private val context: Context) {
         imageLabeler.close()
     }
 
-    fun updateOptions() {
-        // Close the existing labeler and create a new one with updated options
-        imageLabeler.close()
-        imageLabeler = ImageLabeling.getClient(options)
-    }
 }

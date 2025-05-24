@@ -15,6 +15,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
+// Data class to track scanning progress
+data class ScanProgress(
+    val filesProcessed: Int = 0, val totalFilesFound: Int = -1  // -1 means total not yet known
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val context: Context
         get() = getApplication<Application>()
@@ -23,8 +28,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val preferencesManager = PreferencesManager(context)
 
     private val _isScanning = MutableStateFlow(false)
-    val isScanning: StateFlow<Boolean> =
-        _isScanning.asStateFlow()    // Use Sets to avoid duplicates
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    // Add scan progress tracking
+    private val _scanProgress = MutableStateFlow(ScanProgress())
+    val scanProgress: StateFlow<ScanProgress> = _scanProgress.asStateFlow()
+
+    // Use Sets to avoid duplicates
     private val _notesFiles = mutableStateListOf<MediaFile>()
     val notesFiles: List<MediaFile> = _notesFiles
 
@@ -33,12 +43,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Track file keys to avoid duplicates
     private val processedFileKeys = mutableSetOf<String>()
-
-    private val _scanProgress = MutableStateFlow(0)
-    val scanProgress: StateFlow<Int> = _scanProgress.asStateFlow()
-
-    private val _scanTotal = MutableStateFlow(0)
-    val scanTotal: StateFlow<Int> = _scanTotal.asStateFlow()
 
     private val _selectedFiles = mutableStateListOf<MediaFile>()
     val selectedFiles: List<MediaFile> = _selectedFiles
@@ -53,7 +57,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _notesFiles.clear()
         _otherFiles.clear()
         processedFileKeys.clear()
-        _scanProgress.value = 0
+        _scanProgress.value = ScanProgress()  // Reset progress counter
 
         viewModelScope.launch {
             try {
@@ -81,7 +85,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             _otherFiles.add(mediaFile)
         }
-        _scanProgress.value = _notesFiles.size + _otherFiles.size
+
+        // Update progress counter
+        val current = _scanProgress.value
+        _scanProgress.value = current.copy(filesProcessed = current.filesProcessed + 1)
     }
 
     /**
@@ -104,7 +111,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _otherFiles.addAll(sortedOthers)
     }
 
+    /**
+     * Toggle selection state of a media file
+     */
     fun toggleSelection(mediaFile: MediaFile) {
+        val existingSelected = _selectedFiles.find { it.key == mediaFile.key }
+        val isCurrentlySelected = existingSelected != null
+        toggleSelection(mediaFile, !isCurrentlySelected)
+    }
+
+    /**
+     * Set selection state of a media file to a specific value
+     */
+    fun toggleSelection(mediaFile: MediaFile, selected: Boolean) {
         val list = if (mediaFile.isNotes) _notesFiles else _otherFiles
         val index = list.indexOf(mediaFile)
 
@@ -113,18 +132,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val existingSelected = _selectedFiles.find { it.key == mediaFile.key }
             val isCurrentlySelected = existingSelected != null
 
-            // Create updated file with opposite selection state
-            val updatedFile = mediaFile.copy(isSelected = !isCurrentlySelected)
-            list[index] = updatedFile
+            // Only update if the selection state is different
+            if (isCurrentlySelected != selected) {
+                // Create updated file with new selection state
+                val updatedFile = mediaFile.copy(isSelected = selected)
+                list[index] = updatedFile
 
-            // Update the selected files list
-            if (updatedFile.isSelected) {
-                if (existingSelected == null) {  // Don't add if already in the list
-                    _selectedFiles.add(updatedFile)
-                }
-            } else {
-                if (existingSelected != null) {
-                    _selectedFiles.remove(existingSelected)
+                // Update the selected files list
+                if (updatedFile.isSelected) {
+                    if (existingSelected == null) {  // Don't add if already in the list
+                        _selectedFiles.add(updatedFile)
+                    }
+                } else {
+                    if (existingSelected != null) {
+                        _selectedFiles.remove(existingSelected)
+                    }
                 }
             }
         }
@@ -152,11 +174,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Also remove from cache if using PreferencesManager
                 if (mediaFile.isNotes) {
-                    val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableSet()
+                    val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableMap()
                     cachedNotes.remove(mediaFile.path)
                     preferencesManager.saveClassifiedNotesFiles(cachedNotes)
                 } else {
-                    val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableSet()
+                    val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableMap()
                     cachedOthers.remove(mediaFile.path)
                     preferencesManager.saveClassifiedOtherFiles(cachedOthers)
                 }
@@ -170,51 +192,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return count
     }
 
-    fun selectAllNotes(select: Boolean) {
-        // First, deselect existing notes in the selected files list if we're deselecting
-        if (!select) {
-            // Get all notes files that are currently in the selected list
-            val notesToRemove = _selectedFiles.filter { selectedFile ->
-                _notesFiles.any { it.key == selectedFile.key }
-            }
-            // Remove them from selected files
-            _selectedFiles.removeAll(notesToRemove)
-        }
-
-        // Update the selection state of all notes files
-        _notesFiles.forEachIndexed { index, mediaFile ->
-            val updatedFile = mediaFile.copy(isSelected = select)
-            _notesFiles[index] = updatedFile
-
-            // Add to selected files if we're selecting and not already there
-            if (select && !_selectedFiles.any { it.key == updatedFile.key }) {
-                _selectedFiles.add(updatedFile)
-            }
-        }
-    }
-
-    fun selectAllOthers(select: Boolean) {
-        // First, deselect existing other files in the selected files list if we're deselecting
-        if (!select) {
-            // Get all other files that are currently in the selected list
-            val othersToRemove = _selectedFiles.filter { selectedFile ->
-                _otherFiles.any { it.key == selectedFile.key }
-            }
-            // Remove them from selected files
-            _selectedFiles.removeAll(othersToRemove)
-        }
-
-        // Update the selection state of all other files
-        _otherFiles.forEachIndexed { index, mediaFile ->
-            val updatedFile = mediaFile.copy(isSelected = select)
-            _otherFiles[index] = updatedFile
-
-            // Add to selected files if we're selecting and not already there
-            if (select && !_selectedFiles.any { it.key == updatedFile.key }) {
-                _selectedFiles.add(updatedFile)
-            }
-        }
-    }
 
     private fun removeFileFromLists(mediaFile: MediaFile) {
         if (mediaFile.isNotes) {

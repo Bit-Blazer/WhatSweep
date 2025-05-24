@@ -1,5 +1,11 @@
 package com.bitblazer.whatsweep.ui.screens
 
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,23 +22,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +51,8 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,24 +68,35 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.util.PreferencesManager
 import com.bitblazer.whatsweep.viewmodel.MainViewModel
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalFoundationApi::class,
+    ExperimentalPermissionsApi::class
+)
 @Composable
 fun ResultsScreen(
-    viewModel: MainViewModel, onNavigateUp: () -> Unit, modifier: Modifier = Modifier
+    viewModel: MainViewModel, onNavigateToSettings: () -> Unit, modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val prefsManager = remember { PreferencesManager(context) }
     val showConfidenceScores = remember { prefsManager.showConfidenceScores }
 
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+    val scanProgress by viewModel.scanProgress.collectAsStateWithLifecycle()
     val notesFiles = viewModel.notesFiles
     val otherFiles = viewModel.otherFiles
     val selectedFiles = viewModel.selectedFiles
@@ -82,41 +104,200 @@ fun ResultsScreen(
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
 
+    // Grid/List view toggle
+    var isGridView by remember { mutableStateOf(true) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var permissionDenied by remember { mutableStateOf(false) }
+    var showManageStorageDialog by remember { mutableStateOf(false) }
+
+    // Request storage permissions based on Android version
+    val permissionsList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // For Android 13+ (API 33+), use granular media permissions
+        listOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+        )
+    } else {
+        // For Android 12L and below, use READ_EXTERNAL_STORAGE
+        listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+
+    val readMediaPermissions = rememberMultiplePermissionsState(permissionsList)
+
+    // Check if we have MANAGE_EXTERNAL_STORAGE permission (for Android 11+)
+    var isExternalStorageManager by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                true
+            }
+        )
+    }
+
+    // Launch the permission request when the screen is first composed
+    LaunchedEffect(Unit) {
+        readMediaPermissions.launchMultiplePermissionRequest()
+
+        // For Android 11+, check if we need the enhanced storage permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            showManageStorageDialog = true
+        }
+    }
+
+    // Add lifecycle observer to update permissions when app resumes
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // Update storage manager permission status when app resumes
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    isExternalStorageManager = Environment.isExternalStorageManager()
+                }
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // Check permissions using both readMediaPermissions and isExternalStorageManager
+    val hasBasicPermissions = readMediaPermissions.allPermissionsGranted
+    val hasAllPermissions =
+        hasBasicPermissions && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || isExternalStorageManager)
 
     val tabs = listOf(
         "Notes (${notesFiles.size})", "Others (${otherFiles.size})"
     )
 
+    // Dialog to guide users to grant MANAGE_EXTERNAL_STORAGE permission
+    if (showManageStorageDialog) {
+        AlertDialog(
+            onDismissRequest = { showManageStorageDialog = false },
+            title = { Text("Additional Permission Required") },
+            text = {
+                Text(
+                    "To access WhatsApp media folders, this app needs permission to manage external storage. " + "Please tap 'Open Settings' and grant the 'Allow access to manage all files' permission."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showManageStorageDialog = false
+                        val intent =
+                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                data = "package:${context.packageName}".toUri()
+                            }
+                        context.startActivity(intent)
+                    }) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showManageStorageDialog = false }) {
+                    Text("Later")
+                }
+            })
+    }
+
     if (showDeleteDialog) {
         DeleteConfirmationDialog(count = selectedFiles.size, onConfirm = {
-            val deleted = viewModel.deleteSelectedFiles()
+            viewModel.deleteSelectedFiles()
             showDeleteDialog = false
         }, onDismiss = { showDeleteDialog = false })
     }
 
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Scan Results") }, navigationIcon = {
-            IconButton(onClick = onNavigateUp) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-            }
-        }, actions = {
-            if (!isScanning && selectedFiles.isNotEmpty()) {
-                IconButton(
-                    onClick = { }) {
-                    Icon(
-                        Icons.Default.Share, contentDescription = "Share"
-                    )
+        TopAppBar(
+            title = {
+                if (selectedFiles.isEmpty()) {
+                    Text("WhatSweep")
+                } else {
+                    Text("${selectedFiles.size} selected")
                 }
-            }
-        })
-    }, floatingActionButton = {
-        if (!isScanning && selectedFiles.isNotEmpty()) {
-            FloatingActionButton(
-                onClick = { showDeleteDialog = true }) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete")
-            }
-        }
+            }, colors = if (selectedFiles.isNotEmpty()) {
+                // Apply primary color tint to app bar when items are selected
+                androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                androidx.compose.material3.TopAppBarDefaults.topAppBarColors()
+            }, actions = {
+                if (selectedFiles.isNotEmpty()) {
+                    // Show delete button when items are selected
+
+                    IconButton(onClick = { showDeleteDialog = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete selected files")
+                    }
+                    // Select all toggle
+                    val currentPage = pagerState.currentPage
+                    val currentPageFiles = if (currentPage == 0) notesFiles else otherFiles
+
+                    // Check if all files in the current tab are selected
+                    val allSelected =
+                        currentPageFiles.isNotEmpty() && currentPageFiles.all { it.isSelected }
+                    // Select all checkbox
+                    Checkbox(
+                        checked = allSelected, onCheckedChange = { checked ->
+                            // Select or deselect all files in the current tab
+                            if (currentPage == 0) {
+                                notesFiles.forEach { viewModel.toggleSelection(it, checked) }
+                            } else {
+                                otherFiles.forEach { viewModel.toggleSelection(it, checked) }
+                            }
+                        }, colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.onPrimary,
+                            uncheckedColor = MaterialTheme.colorScheme.onPrimary,
+                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
+                        ), modifier = Modifier.padding(8.dp)
+                    )
+                } else {
+                    // Default view: show scan button, view toggle, and settings
+                    // Main scan button
+                    Button(
+                        onClick = {
+                            if (hasAllPermissions) {
+                                viewModel.scanWhatsAppFolder()
+                            } else {
+                                // If basic permissions granted but not MANAGE_EXTERNAL_STORAGE on Android 11+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasBasicPermissions && !isExternalStorageManager) {
+                                    showManageStorageDialog = true
+                                } else {
+                                    permissionDenied = true
+                                }
+                            }
+                        },
+                        enabled = !isScanning && hasAllPermissions,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Chat,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Scan")
+                    }
+
+                    // View toggle button
+                    if (notesFiles.isNotEmpty() || otherFiles.isNotEmpty()) {
+                        // Only show view toggle if we have content to display
+                        IconButton(onClick = { isGridView = !isGridView }) {
+                            Icon(
+                                if (isGridView) Icons.AutoMirrored.Filled.List else Icons.Default.GridView,
+                                contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View"
+                            )
+                        }
+                    }
+                    // Settings button
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
+                }
+            })
     }) { paddingValues ->
         Column(
             modifier = modifier
@@ -128,14 +309,37 @@ fun ResultsScreen(
                     modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
                 ) {
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(16.dp)
                     ) {
-                        Text("Scanning and classifying files...")
+                        Text(
+                            text = "Scanning and classifying files...",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Show processed file count
+                        Text(
+                            text = "Processed: ${scanProgress.filesProcessed} files",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // Show classification counts
+                        Text(
+                            text = "Found: ${notesFiles.size} notes, ${otherFiles.size} other files",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
                         Spacer(modifier = Modifier.height(16.dp))
-                        androidx.compose.material3.LinearProgressIndicator()
+                        androidx.compose.material3.LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(0.7f)
+                        )
                     }
                 }
-            } else if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
+            } else if (permissionDenied) {
+                // Show permission denied message
                 Box(
                     modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
                 ) {
@@ -144,23 +348,73 @@ fun ResultsScreen(
                         modifier = Modifier.padding(16.dp)
                     ) {
                         Text(
-                            text = "No files found", style = MaterialTheme.typography.headlineSmall
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "Make sure WhatsApp is installed and has media in its folder.\n\n" + "You can also try the 'Select Custom Folder' option to scan a specific directory.",
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = "Storage Permission Required",
+                            style = MaterialTheme.typography.headlineMedium,
                             textAlign = TextAlign.Center
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
 
+                        Text(
+                            text = "Storage permission is required to scan files. Please grant the permission in app settings.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.error
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
                         Button(
-                            onClick = onNavigateUp
-                        ) {
-                            Text("Go Back")
+                            onClick = {
+                                val intent =
+                                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.fromParts("package", context.packageName, null)
+                                    }
+                                context.startActivity(intent)
+                            }) {
+                            Text("Open App Settings")
+                        }
+                    }
+                }
+            } else if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
+                // Empty state - show welcome message and instructions
+                Box(
+                    modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "WhatSweep",
+                            style = MaterialTheme.typography.headlineMedium,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Scan and identify study notes in your WhatsApp media and local folders",
+                            style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        Text(
+                            text = "Tap the 'Scan' button in the top bar to begin.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+
+                        if (!hasAllPermissions) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Note: You'll need to grant storage permissions when prompted.",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.error
+                            )
                         }
                     }
                 }
@@ -184,29 +438,15 @@ fun ResultsScreen(
                         0 -> MediaGrid(
                             mediaFiles = notesFiles,
                             onItemClick = { viewModel.toggleSelection(it) },
-                            onSelectAll = { viewModel.selectAllNotes(it) },
-                            showConfidenceScores = showConfidenceScores
+                            showConfidenceScores = showConfidenceScores,
+                            isGridView = isGridView
                         )
 
                         1 -> MediaGrid(
                             mediaFiles = otherFiles,
                             onItemClick = { viewModel.toggleSelection(it) },
-                            onSelectAll = { viewModel.selectAllOthers(it) },
-                            showConfidenceScores = showConfidenceScores
-                        )
-                    }
-                }
-
-                if (selectedFiles.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.primaryContainer)
-                            .padding(16.dp)
-                    ) {
-                        Text(
-                            text = "${selectedFiles.size} files selected",
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            showConfidenceScores = showConfidenceScores,
+                            isGridView = isGridView
                         )
                     }
                 }
@@ -219,65 +459,54 @@ fun ResultsScreen(
 fun MediaGrid(
     mediaFiles: List<MediaFile>,
     onItemClick: (MediaFile) -> Unit,
-    onSelectAll: (Boolean) -> Unit,
     showConfidenceScores: Boolean = false,
+    isGridView: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // Group files by type (images first, then PDFs)
     val imageFiles = mediaFiles.filter { it.isImage }
     val pdfFiles = mediaFiles.filter { it.isPdf }
 
-    val scrollState = rememberScrollState()
-
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
+        modifier = modifier.fillMaxSize()
     ) {
         if (mediaFiles.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                var selectAllChecked by remember { mutableStateOf(false) }
-
-                Checkbox(
-                    checked = selectAllChecked, onCheckedChange = { checked ->
-                        selectAllChecked = checked
-                        onSelectAll(checked)
-                    })
-
-                Text("Select All")
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                Text(
-                    text = "${mediaFiles.size} files", style = MaterialTheme.typography.bodyMedium
-                )
-            }
-
             // Images Section
             if (imageFiles.isNotEmpty()) {
                 SectionTitle(title = "Images (${imageFiles.size})")
 
-                MediaGrid(
-                    mediaFiles = imageFiles,
-                    onItemClick = onItemClick,
-                    showConfidenceScores = showConfidenceScores
-                )
+                if (isGridView) {
+                    MediaGridView(
+                        mediaFiles = imageFiles,
+                        onItemClick = onItemClick,
+                        showConfidenceScores = showConfidenceScores
+                    )
+                } else {
+                    MediaListView(
+                        mediaFiles = imageFiles,
+                        onItemClick = onItemClick,
+                        showConfidenceScores = showConfidenceScores
+                    )
+                }
             }
 
             // PDF Section
             if (pdfFiles.isNotEmpty()) {
                 SectionTitle(title = "PDF Pages (${pdfFiles.size})")
 
-                MediaGrid(
-                    mediaFiles = pdfFiles,
-                    onItemClick = onItemClick,
-                    showConfidenceScores = showConfidenceScores
-                )
+                if (isGridView) {
+                    MediaGridView(
+                        mediaFiles = pdfFiles,
+                        onItemClick = onItemClick,
+                        showConfidenceScores = showConfidenceScores
+                    )
+                } else {
+                    MediaListView(
+                        mediaFiles = pdfFiles,
+                        onItemClick = onItemClick,
+                        showConfidenceScores = showConfidenceScores
+                    )
+                }
             }
         } else {
             Box(
@@ -305,29 +534,22 @@ fun SectionTitle(title: String) {
 }
 
 @Composable
-fun MediaGrid(
+fun MediaGridView(
     mediaFiles: List<MediaFile>,
     onItemClick: (MediaFile) -> Unit,
     showConfidenceScores: Boolean = false
 ) {
-    //calculate dp size as (mediaFiles.size / 3 + 1) * 140
-    val width = if (mediaFiles.size > 3) {
-        120.dp * 3 + 16.dp * 2
-    } else {
-        120.dp * mediaFiles.size + 16.dp * (mediaFiles.size - 1)
-    }
-
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 120.dp),
         contentPadding = PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.height(width) // Approximate height based on number of items
+        modifier = Modifier.fillMaxWidth()
     ) {
         items(
             // Group media files by their file name to prevent duplicates
             items = mediaFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-            MediaItem(
+            MediaGridItem(
                 mediaFile = mediaFile,
                 onClick = { onItemClick(mediaFile) },
                 showConfidenceScore = showConfidenceScores
@@ -337,7 +559,30 @@ fun MediaGrid(
 }
 
 @Composable
-fun MediaItem(
+fun MediaListView(
+    mediaFiles: List<MediaFile>,
+    onItemClick: (MediaFile) -> Unit,
+    showConfidenceScores: Boolean = false
+) {
+    LazyColumn(
+        contentPadding = PaddingValues(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        items(
+            // Group media files by their file name to prevent duplicates
+            items = mediaFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
+            MediaListItem(
+                mediaFile = mediaFile,
+                onClick = { onItemClick(mediaFile) },
+                showConfidenceScore = showConfidenceScores
+            )
+        }
+    }
+}
+
+@Composable
+fun MediaGridItem(
     mediaFile: MediaFile,
     onClick: () -> Unit,
     showConfidenceScore: Boolean = false,
@@ -369,6 +614,8 @@ fun MediaItem(
                 painterResource(id = android.R.drawable.ic_menu_report_image)
             } else null
         )
+
+        // File type badge (PDF)
         if (mediaFile.isPdf) {
             Box(
                 modifier = Modifier
@@ -388,6 +635,7 @@ fun MediaItem(
             }
         }
 
+        // File info at bottom
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -425,7 +673,14 @@ fun MediaItem(
             }
         }
 
+        // Selection overlay
         if (mediaFile.isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+            )
+
             Box(
                 modifier = Modifier
                     .size(32.dp)
@@ -443,6 +698,128 @@ fun MediaItem(
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun MediaListItem(
+    mediaFile: MediaFile,
+    onClick: () -> Unit,
+    showConfidenceScore: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(
+                if (mediaFile.isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+            .border(
+                width = if (mediaFile.isSelected) 2.dp else 1.dp,
+                color = if (mediaFile.isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = MaterialTheme.shapes.medium
+            )
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Thumbnail
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(MaterialTheme.shapes.small)
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(if (mediaFile.isPdf && mediaFile.thumbnailUri != null) mediaFile.thumbnailUri else mediaFile.uri)
+                    .crossfade(true).build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                error = if (mediaFile.isPdf) {
+                    painterResource(id = android.R.drawable.ic_menu_report_image)
+                } else null
+            )
+
+            // Selection indicator
+            if (mediaFile.isSelected) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = MaterialTheme.shapes.small
+                        )
+                        .align(Alignment.TopEnd)
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .align(Alignment.Center)
+                    )
+                }
+            }
+        }
+
+        // File info
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp)
+        ) {
+            Text(
+                text = mediaFile.name,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = mediaFile.formattedSize,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (mediaFile.isPdf) {
+                    Box(
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = MaterialTheme.shapes.small
+                            )
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "PDF",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+        }
+
+        // Confidence score
+        if (showConfidenceScore && mediaFile.classification != null) {
+            Text(
+                text = mediaFile.confidencePercentage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (mediaFile.isNotes) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(start = 8.dp)
+            )
         }
     }
 }

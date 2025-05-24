@@ -29,6 +29,7 @@ render.experimental.xml
 # Keystore files
 *.jks
 *.keystore
+keystore
 
 # Google Services (e.g. APIs or Firebase)
 google-services.json
@@ -198,3 +199,6 @@ fabric.properties
 !/gradle/wrapper/gradle-wrapper.jar
 
 # End of https://www.toptal.com/developers/gitignore/api/android,androidstudio,kotlin,java
+
+#Release files
+release

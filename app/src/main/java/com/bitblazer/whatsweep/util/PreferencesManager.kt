@@ -14,7 +14,7 @@ class PreferencesManager(context: Context) {
     private val gson = Gson()
 
     var includePdfScanning: Boolean
-        get() = prefs.getBoolean(KEY_INCLUDE_PDF_SCANNING, true)
+        get() = prefs.getBoolean(KEY_INCLUDE_PDF_SCANNING, false)
         set(value) = prefs.edit { putBoolean(KEY_INCLUDE_PDF_SCANNING, value) }
 
     var showConfidenceScores: Boolean
@@ -26,33 +26,40 @@ class PreferencesManager(context: Context) {
         set(value) = prefs.edit { putFloat(KEY_CONFIDENCE_THRESHOLD, value) }
 
     // Cache for file classification to avoid rescanning
-    fun getClassifiedNotesFiles(): Set<String> {
+    // Cache data class for storing file classification with confidence
+    data class CachedClassification(val path: String, val confidence: Float)
+
+    fun getClassifiedNotesFiles(): Map<String, Float> {
         val json = prefs.getString(KEY_NOTES_CACHE, null)
         return if (json != null) {
-            val type = object : TypeToken<Set<String>>() {}.type
-            gson.fromJson(json, type)
+            val type = object : TypeToken<List<CachedClassification>>() {}.type
+            val list: List<CachedClassification> = gson.fromJson(json, type) ?: emptyList()
+            list.associate { it.path to it.confidence }
         } else {
-            emptySet()
+            emptyMap()
         }
     }
 
-    fun getClassifiedOtherFiles(): Set<String> {
+    fun getClassifiedOtherFiles(): Map<String, Float> {
         val json = prefs.getString(KEY_OTHER_CACHE, null)
         return if (json != null) {
-            val type = object : TypeToken<Set<String>>() {}.type
-            gson.fromJson(json, type)
+            val type = object : TypeToken<List<CachedClassification>>() {}.type
+            val list: List<CachedClassification> = gson.fromJson(json, type) ?: emptyList()
+            list.associate { it.path to it.confidence }
         } else {
-            emptySet()
+            emptyMap()
         }
     }
 
-    fun saveClassifiedNotesFiles(filePaths: Set<String>) {
-        val json = gson.toJson(filePaths)
+    fun saveClassifiedNotesFiles(filePathsWithConfidence: Map<String, Float>) {
+        val list = filePathsWithConfidence.map { CachedClassification(it.key, it.value) }
+        val json = gson.toJson(list)
         prefs.edit { putString(KEY_NOTES_CACHE, json) }
     }
 
-    fun saveClassifiedOtherFiles(filePaths: Set<String>) {
-        val json = gson.toJson(filePaths)
+    fun saveClassifiedOtherFiles(filePathsWithConfidence: Map<String, Float>) {
+        val list = filePathsWithConfidence.map { CachedClassification(it.key, it.value) }
+        val json = gson.toJson(list)
         prefs.edit { putString(KEY_OTHER_CACHE, json) }
     }
 
