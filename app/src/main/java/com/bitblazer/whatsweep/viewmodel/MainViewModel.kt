@@ -28,6 +28,21 @@ data class ScanProgress(
 )
 
 /**
+ * Data class representing the progress of file deletion operation.
+ *
+ * @property filesDeleted Number of files that have been successfully deleted
+ * @property totalFilesToDelete Total number of files to be deleted
+ * @property currentFileName Name of file currently being deleted
+ * @property errors List of error messages for files that failed to delete
+ */
+data class DeleteProgress(
+    val filesDeleted: Int = 0,
+    val totalFilesToDelete: Int = 0,
+    val currentFileName: String = "",
+    val errors: List<String> = emptyList()
+)
+
+/**
  * UI state representing the scanning operation status.
  */
 sealed class ScanState {
@@ -35,6 +50,18 @@ sealed class ScanState {
     data class Scanning(val progress: ScanProgress) : ScanState()
     data class Completed(val notesCount: Int, val otherCount: Int) : ScanState()
     data class Error(val message: String, val exception: Throwable? = null) : ScanState()
+}
+
+/**
+ * UI state representing the deletion operation status.
+ */
+sealed class DeleteState {
+    object Idle : DeleteState()
+    data class Deleting(val progress: DeleteProgress) : DeleteState()
+    data class Completed(val successCount: Int, val totalCount: Int, val errors: List<String>) :
+        DeleteState()
+
+    data class Error(val message: String, val exception: Throwable? = null) : DeleteState()
 }
 
 /**
@@ -65,6 +92,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Scan state management
     private val _scanState = MutableStateFlow<ScanState>(ScanState.Idle)
     val scanState: StateFlow<ScanState> = _scanState.asStateFlow()
+
+    // Delete state management
+    private val _deleteState = MutableStateFlow<DeleteState>(DeleteState.Idle)
+    val deleteState: StateFlow<DeleteState> = _deleteState.asStateFlow()
 
     // Backwards compatibility
     val isScanning: StateFlow<Boolean> = MutableStateFlow(false)
@@ -237,41 +268,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Deletes all currently selected files from storage and updates the UI.
-     *
-     * @return Number of files successfully deleted
+     * Deletes all currently selected files from storage and updates the UI with progress.
+     * This operation runs on a background thread and updates delete state reactively.
      */
-    fun deleteSelectedFiles(): Int {
+    fun deleteSelectedFiles() {
+        if (_deleteState.value is DeleteState.Deleting) {
+            Log.w(TAG, "Delete already in progress, ignoring request")
+            return
+        }
+
         val filesToDelete = _selectedFiles.value.toList()
-        var successCount = 0
-        val errors = mutableListOf<String>()
+        if (filesToDelete.isEmpty()) {
+            Log.w(TAG, "No files selected for deletion")
+            return
+        }
 
-        Log.d(TAG, "Attempting to delete ${filesToDelete.size} selected files")
+        Log.d(TAG, "Starting deletion of ${filesToDelete.size} selected files")
 
-        filesToDelete.forEach { mediaFile ->
+        viewModelScope.launch {
             try {
-                if (deleteMediaFile(mediaFile)) {
-                    successCount++
-                    removeFileFromLists(mediaFile)
-                    Log.d(TAG, "Successfully deleted: ${mediaFile.name}")
-                } else {
-                    errors.add("Failed to delete: ${mediaFile.name}")
+                // Initialize delete state
+                _deleteState.value = DeleteState.Deleting(
+                    DeleteProgress(
+                        filesDeleted = 0,
+                        totalFilesToDelete = filesToDelete.size,
+                        currentFileName = "",
+                        errors = emptyList()
+                    )
+                )
+
+                var successCount = 0
+                val errors = mutableListOf<String>()
+
+                filesToDelete.forEachIndexed { index, mediaFile ->
+                    try {
+                        // Update progress to show current file being deleted
+                        val currentState = _deleteState.value as DeleteState.Deleting
+                        _deleteState.value = DeleteState.Deleting(
+                            currentState.progress.copy(
+                                currentFileName = mediaFile.name
+                            )
+                        )
+
+                        if (deleteMediaFile(mediaFile)) {
+                            successCount++
+                            removeFileFromLists(mediaFile)
+                            Log.d(TAG, "Successfully deleted: ${mediaFile.name}")
+                        } else {
+                            val errorMsg = "Failed to delete: ${mediaFile.name}"
+                            errors.add(errorMsg)
+                            Log.w(TAG, errorMsg)
+                        }
+                    } catch (e: Exception) {
+                        val errorMsg = "Error deleting ${mediaFile.name}: ${e.localizedMessage}"
+                        errors.add(errorMsg)
+                        Log.e(TAG, "Error deleting file: ${mediaFile.name}", e)
+                    }
+
+                    // Update progress after each file
+                    val updatedState = _deleteState.value as DeleteState.Deleting
+                    _deleteState.value = DeleteState.Deleting(
+                        updatedState.progress.copy(
+                            filesDeleted = successCount, errors = errors.toList()
+                        )
+                    )
+
+                    // Add a small delay to make progress visible for better UX
+                    kotlinx.coroutines.delay(100)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error deleting file: ${mediaFile.name}", e)
-                errors.add("Error deleting ${mediaFile.name}: ${e.localizedMessage}")
+
+                // Clear selection
+                _selectedFiles.value = emptyList()
+
+                // Complete deletion
+                _deleteState.value = DeleteState.Completed(
+                    successCount = successCount,
+                    totalCount = filesToDelete.size,
+                    errors = errors.toList()
+                )
+
+                Log.d(TAG, "Deletion completed: $successCount/${filesToDelete.size} files deleted")
+
+                // Auto-reset to idle after a short delay
+                kotlinx.coroutines.delay(2000)
+                _deleteState.value = DeleteState.Idle
+
+            } catch (exception: Exception) {
+                Log.e(TAG, "Delete operation failed", exception)
+                _deleteState.value = DeleteState.Error(
+                    message = "Failed to delete files: ${exception.localizedMessage}",
+                    exception = exception
+                )
+
+                // Auto-reset to idle after error
+                kotlinx.coroutines.delay(3000)
+                _deleteState.value = DeleteState.Idle
             }
         }
+    }
 
-        // Clear selection
-        _selectedFiles.value = emptyList()
-
-        if (errors.isNotEmpty()) {
-            Log.w(TAG, "Some files could not be deleted: ${errors.joinToString()}")
-        }
-
-        Log.d(TAG, "Deletion completed: $successCount/${filesToDelete.size} files deleted")
-        return successCount
+    /**
+     * Resets the delete state to idle (used when dismissing dialogs)
+     */
+    fun resetDeleteState() {
+        _deleteState.value = DeleteState.Idle
     }
 
     /**

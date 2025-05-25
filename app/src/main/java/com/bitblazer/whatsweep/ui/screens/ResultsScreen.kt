@@ -30,6 +30,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
@@ -77,6 +79,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.util.PreferencesManager
+import com.bitblazer.whatsweep.viewmodel.DeleteState
 import com.bitblazer.whatsweep.viewmodel.MainViewModel
 import com.bitblazer.whatsweep.viewmodel.ScanState
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -98,6 +101,7 @@ fun ResultsScreen(
 
     // Collect state using proper StateFlow collectors
     val scanState by viewModel.scanState.collectAsStateWithLifecycle()
+    val deleteState by viewModel.deleteState.collectAsStateWithLifecycle()
     val notesFiles by viewModel.notesFiles.collectAsStateWithLifecycle()
     val otherFiles by viewModel.otherFiles.collectAsStateWithLifecycle()
     val selectedFiles by viewModel.selectedFiles.collectAsStateWithLifecycle()
@@ -111,6 +115,14 @@ fun ResultsScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var permissionDenied by remember { mutableStateOf(false) }
     var showManageStorageDialog by remember { mutableStateOf(false) }
+
+    // Auto-close delete dialog when deletion is completed
+    LaunchedEffect(deleteState) {
+        if (deleteState is DeleteState.Completed || deleteState is DeleteState.Error) {
+            kotlinx.coroutines.delay(1500) // Show result briefly
+            showDeleteDialog = false
+        }
+    }
 
     // Request storage permissions based on Android version
     val permissionsList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -203,10 +215,16 @@ fun ResultsScreen(
     }
 
     if (showDeleteDialog) {
-        DeleteConfirmationDialog(count = selectedFiles.size, onConfirm = {
-            viewModel.deleteSelectedFiles()
-            showDeleteDialog = false
-        }, onDismiss = { showDeleteDialog = false })
+        DeleteConfirmationDialog(
+            count = selectedFiles.size,
+            deleteState = deleteState,
+            onConfirm = {
+                viewModel.deleteSelectedFiles()
+            },
+            onDismiss = {
+                showDeleteDialog = false
+                viewModel.resetDeleteState()
+            })
     }
 
     Scaffold(topBar = {
@@ -984,24 +1002,158 @@ fun MediaListItem(
 
 @Composable
 fun DeleteConfirmationDialog(
-    count: Int, onConfirm: () -> Unit, onDismiss: () -> Unit
+    count: Int, deleteState: DeleteState, onConfirm: () -> Unit, onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Delete Files") },
-        text = { Text("Are you sure you want to delete $count selected files? This action cannot be undone.") },
-        confirmButton = {
-            Button(
-                onClick = onConfirm
-            ) {
-                Text("Delete")
+    // Auto-dismiss dialog when deletion is completed successfully
+    LaunchedEffect(deleteState) {
+        if (deleteState is DeleteState.Completed) {
+            kotlinx.coroutines.delay(1500) // Show completion message briefly
+            onDismiss()
+        }
+    }
+
+    AlertDialog(onDismissRequest = {
+        // Only allow dismissing if not currently deleting
+        if (deleteState !is DeleteState.Deleting) {
+            onDismiss()
+        }
+    }, title = {
+        Text(
+            when (deleteState) {
+                is DeleteState.Idle -> "Delete Files"
+                is DeleteState.Deleting -> "Deleting Files..."
+                is DeleteState.Completed -> "Deletion Complete"
+                is DeleteState.Error -> "Deletion Error"
             }
-        },
-        dismissButton = {
-            Button(
-                onClick = onDismiss
-            ) {
-                Text("Cancel")
+        )
+    }, text = {
+        Column {
+            when (deleteState) {
+                is DeleteState.Idle -> {
+                    Text("Are you sure you want to delete $count selected files? This action cannot be undone.")
+                }
+
+                is DeleteState.Deleting -> {
+                    val progress = deleteState.progress
+                    Text("Deleting ${progress.filesDeleted} of ${progress.totalFilesToDelete} files...")
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { progress.filesDeleted.toFloat() / progress.totalFilesToDelete.toFloat() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (progress.currentFileName.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Deleting: ${progress.currentFileName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    if (progress.errors.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${progress.errors.size} errors occurred",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
+                is DeleteState.Completed -> {
+                    val successCount = deleteState.successCount
+                    val totalCount = deleteState.totalCount
+                    val errorCount = deleteState.errors.size
+
+                    if (errorCount == 0) {
+                        Text("Successfully deleted all $successCount files.")
+                    } else {
+                        Text("Deleted $successCount of $totalCount files.\n$errorCount files could not be deleted.")
+
+                        if (deleteState.errors.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (deleteState.errors.size > 5) {
+                                // Show scrollable error list for many errors
+                                val errorScrollState = rememberScrollState()
+                                Box(
+                                    modifier = Modifier
+                                        .height(120.dp)
+                                        .fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Errors:\n${deleteState.errors.joinToString("\n")}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .verticalScroll(errorScrollState)
+                                            .padding(end = 12.dp)
+                                    )
+
+
+                                }
+                            } else {
+                                // Show simple error list for few errors
+                                Text(
+                                    text = "Errors:\n${deleteState.errors.joinToString("\n")}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+
+                is DeleteState.Error -> {
+                    Text("An error occurred during deletion: ${deleteState.message}")
+                }
             }
-        })
+        }
+    }, confirmButton = {
+        when (deleteState) {
+            is DeleteState.Idle -> {
+                Button(
+                    onClick = onConfirm
+                ) {
+                    Text("Delete")
+                }
+            }
+
+            is DeleteState.Deleting -> {
+                // No confirm button while deleting
+            }
+
+            is DeleteState.Completed, is DeleteState.Error -> {
+                Button(
+                    onClick = onDismiss
+                ) {
+                    Text("OK")
+                }
+            }
+        }
+    }, dismissButton = {
+        when (deleteState) {
+            is DeleteState.Idle -> {
+                Button(
+                    onClick = onDismiss
+                ) {
+                    Text("Cancel")
+                }
+            }
+
+            is DeleteState.Deleting -> {
+                // No dismiss button while deleting to prevent accidental cancellation
+            }
+
+            is DeleteState.Completed, is DeleteState.Error -> {
+                // No dismiss button, only OK button
+            }
+        }
+    })
 }
