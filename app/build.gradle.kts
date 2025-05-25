@@ -29,6 +29,14 @@ android {
         versionName = "1.0"
 
     }
+    splits{
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk  = false
+        }
+    }
 
     signingConfigs {
         create("release") {
@@ -41,7 +49,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
@@ -62,19 +71,11 @@ android {
 }
 
 dependencies {
-    implementation(libs.core.ktx)
-    implementation(libs.appcompat)
     implementation(libs.material)
-    implementation(libs.constraintlayout)
 
     // Compose
-    implementation(platform(libs.compose.bom))
-    implementation(libs.compose.ui)
-    implementation(libs.compose.uiGraphics)
-    implementation(libs.compose.uiToolingPreview)
     implementation(libs.compose.materialIconsExtended)
     implementation(libs.navigation.compose)
-    implementation(libs.lifecycle.runtimeCompose)
     implementation(libs.compose.material3)
 
     // ML Kit Custom Model
@@ -85,20 +86,11 @@ dependencies {
     implementation(libs.coil.compose)
 
     // EXIF data handling for image orientation
-    implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation(libs.exifinterface)
 
-    // ViewModels for Compose
-    implementation(libs.lifecycle.viewmodelCompose)
     // Permissions handling
     implementation(libs.accompanist.permissions)
 
-    // Activity
-    implementation(libs.activity.ktx)
-    implementation(libs.activity.compose)
-
     // Gson for JSON serialization/deserialization
     implementation(libs.gson)
-    implementation(libs.tensorflow.lite.support)
-    implementation(libs.tensorflow.lite.metadata)
-    implementation(libs.tensorflow.lite.gpu)
 }

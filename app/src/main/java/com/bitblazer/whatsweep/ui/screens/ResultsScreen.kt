@@ -31,12 +31,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -231,7 +231,7 @@ fun ResultsScreen(
                     // Show delete button when items are selected
 
                     IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete selected files")
+                        Icon(Icons.Outlined.Delete, contentDescription = "Delete selected files")
                     }
                     // Select all toggle
                     val currentPage = pagerState.currentPage
@@ -274,7 +274,7 @@ fun ResultsScreen(
                         modifier = Modifier.padding(horizontal = 8.dp)
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Chat,
+                            Icons.AutoMirrored.Outlined.Chat,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
@@ -287,14 +287,14 @@ fun ResultsScreen(
                         // Only show view toggle if we have content to display
                         IconButton(onClick = { isGridView = !isGridView }) {
                             Icon(
-                                if (isGridView) Icons.AutoMirrored.Filled.List else Icons.Default.GridView,
+                                if (isGridView) Icons.AutoMirrored.Outlined.FormatListBulleted else Icons.Outlined.GridView,
                                 contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View"
                             )
                         }
                     }
                     // Settings button
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                     }
                 }
             })
@@ -365,10 +365,6 @@ fun ResultsScreen(
             }
         }
     }
-}
-
-private fun MainViewModel.clearError() {
-    this.clearError()
 }
 
 @Composable
@@ -854,7 +850,7 @@ fun MediaGridItem(
                     .padding(4.dp)
             ) {
                 Icon(
-                    Icons.Default.Check,
+                    Icons.Outlined.Check,
                     contentDescription = "Selected",
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.align(Alignment.Center)
@@ -920,7 +916,7 @@ fun MediaListItem(
                         .align(Alignment.TopEnd)
                 ) {
                     Icon(
-                        Icons.Default.Check,
+                        Icons.Outlined.Check,
                         contentDescription = "Selected",
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier
