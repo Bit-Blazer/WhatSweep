@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -25,6 +28,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -48,8 +52,7 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateUp: () -> Unit,
-    modifier: Modifier = Modifier
+    onNavigateUp: () -> Unit, modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -61,31 +64,21 @@ fun SettingsScreen(
     var showConfidenceScores by remember { mutableStateOf(prefsManager.showConfidenceScores) }
     var confidenceThreshold by remember { mutableFloatStateOf(prefsManager.confidenceThreshold) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Settings",
-                        modifier = Modifier.semantics {
-                            contentDescription = "Settings screen"
-                        }
-                    )
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateUp,
-                        modifier = Modifier.semantics {
-                            contentDescription = "Navigate back to main screen"
-                        }
-                    ) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { paddingValues ->
+    Scaffold(topBar = {
+        TopAppBar(title = {
+            Text(
+                text = "Settings", modifier = Modifier.semantics {
+                    contentDescription = "Settings screen"
+                })
+        }, navigationIcon = {
+            IconButton(
+                onClick = onNavigateUp, modifier = Modifier.semantics {
+                    contentDescription = "Navigate back to main screen"
+                }) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+            }
+        })
+    }, snackbarHost = { SnackbarHost(snackbarHostState) }) { paddingValues ->
         Column(
             modifier = modifier
                 .fillMaxSize()
@@ -116,8 +109,7 @@ fun SettingsScreen(
                                 snackbarHostState.showSnackbar("Failed to clear cache: ${e.message}")
                             }
                         }
-                    }
-                )
+                    })
             }
 
             // Classification Settings Section
@@ -132,8 +124,7 @@ fun SettingsScreen(
                     onConfidenceThresholdChange = { newValue ->
                         confidenceThreshold = newValue
                         prefsManager.confidenceThreshold = newValue
-                    }
-                )
+                    })
             }
 
             // About Section
@@ -146,9 +137,7 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsSection(
-    title: String,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
+    title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
@@ -169,14 +158,12 @@ private fun ScanSettingsCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
+        modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SettingsSwitchItem(
                 title = "Include PDF scanning",
@@ -212,8 +199,7 @@ private fun ScanSettingsCard(
                 )
 
                 OutlinedButton(
-                    onClick = onClearCache,
-                    modifier = Modifier.fillMaxWidth()
+                    onClick = onClearCache, modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(
                         Icons.Outlined.Delete,
@@ -236,14 +222,12 @@ private fun ClassificationSettingsCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
+        modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SettingsSwitchItem(
                 title = "Show confidence scores",
@@ -289,8 +273,7 @@ private fun ClassificationSettingsCard(
                         .semantics {
                             contentDescription =
                                 "Confidence threshold slider, currently ${(confidenceThreshold * 100).roundToInt()} percent"
-                        }
-                )
+                        })
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -316,14 +299,12 @@ private fun ClassificationSettingsCard(
 @Composable
 private fun AboutCard(modifier: Modifier = Modifier) {
     Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
+        modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -335,8 +316,7 @@ private fun AboutCard(modifier: Modifier = Modifier) {
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "About WhatSweep",
-                    style = MaterialTheme.typography.titleMedium
+                    text = "About WhatSweep", style = MaterialTheme.typography.titleMedium
                 )
             }
 
@@ -360,8 +340,7 @@ private fun AboutCard(modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Version",
-                    style = MaterialTheme.typography.titleSmall
+                    text = "Version", style = MaterialTheme.typography.titleSmall
                 )
                 Text(
                     text = "1.0.0",
@@ -393,8 +372,7 @@ fun SettingsSwitchItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium
+                text = title, style = MaterialTheme.typography.titleMedium
             )
 
             Text(
@@ -406,7 +384,14 @@ fun SettingsSwitchItem(
 
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange
+            onCheckedChange = onCheckedChange,
+            thumbContent = {
+                Icon(
+                    imageVector = if (checked) Icons.Rounded.Check else Icons.Rounded.Close,
+                    contentDescription = null,
+                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                )
+            },
         )
     }
 }

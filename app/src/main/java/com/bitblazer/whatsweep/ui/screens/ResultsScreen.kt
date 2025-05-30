@@ -29,12 +29,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+import androidx.compose.material.icons.automirrored.outlined.Notes
+import androidx.compose.material.icons.outlined.AllInclusive
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.GridView
@@ -44,12 +47,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LeadingIconTab
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -64,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -84,6 +89,7 @@ import com.bitblazer.whatsweep.viewmodel.MainViewModel
 import com.bitblazer.whatsweep.viewmodel.ScanState
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 @OptIn(
@@ -181,7 +187,8 @@ fun ResultsScreen(
     val hasAllPermissions =
         hasBasicPermissions && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || isExternalStorageManager)
     val tabs = listOf(
-        "Notes (${notesFiles.size})", "Others (${otherFiles.size})"
+        "Notes (${notesFiles.size})" to Icons.AutoMirrored.Outlined.Notes,
+        "Others (${otherFiles.size})" to Icons.Outlined.AllInclusive,
     )
 
     // Dialog to guide users to grant MANAGE_EXTERNAL_STORAGE permission
@@ -549,24 +556,28 @@ private fun PermissionDeniedContent() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ContentTabs(
-    pagerState: androidx.compose.foundation.pager.PagerState,
-    tabs: List<String>,
+    pagerState: PagerState,
+    tabs: List<Pair<String, ImageVector>>,
     notesFiles: List<MediaFile>,
     otherFiles: List<MediaFile>,
     viewModel: MainViewModel,
     showConfidenceScores: Boolean,
     isGridView: Boolean,
-    coroutineScope: kotlinx.coroutines.CoroutineScope
+    coroutineScope: CoroutineScope
 ) {
-    TabRow(selectedTabIndex = pagerState.currentPage) {
-        tabs.forEachIndexed { index, title ->
-            Tab(selected = pagerState.currentPage == index, onClick = {
+    PrimaryTabRow(
+        selectedTabIndex = pagerState.currentPage, divider = {
+            HorizontalDivider()
+        }) {
+        tabs.forEachIndexed { index, (title, icon) ->
+            LeadingIconTab(selected = pagerState.currentPage == index, onClick = {
                 coroutineScope.launch {
                     pagerState.animateScrollToPage(index)
                 }
-            }, text = { Text(title) })
+            }, text = { Text(title) }, icon = { Icon(icon, contentDescription = null) })
         }
     }
 
