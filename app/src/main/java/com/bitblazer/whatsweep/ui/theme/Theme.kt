@@ -98,8 +98,8 @@ fun AppTheme(
         dynamicColor && !darkTheme -> dynamicLightColorScheme(LocalContext.current)
 
         // Fall back to custom theme colors
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        darkTheme -> darkColorScheme()
+        else -> lightColorScheme()
     }
 
     MaterialTheme(
