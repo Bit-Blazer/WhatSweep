@@ -17,7 +17,6 @@ import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.util.PreferencesManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
@@ -30,7 +29,7 @@ import kotlin.coroutines.coroutineContext
  *
  * Handles:
  * - Multi-directory scanning across different Android versions
- * - ML-based image classification with caching
+ * - ML-based image classification with incremental caching
  * - PDF thumbnail generation and classification
  * - Memory-efficient processing with cancellation support
  * - Proper resource management for PDF rendering
@@ -164,8 +163,8 @@ class MediaScanner(private val context: Context) {
                 Log.w(TAG, "No WhatsApp media files found in any location")
             }
 
-            // Save new classifications to cache
-            saveNewClassifications(newClassifications, cachedNotes, cachedOthers)
+            // Save any remaining classifications to cache
+            newClassifications.saveToCache(preferencesManager)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error during WhatsApp folder scan", e)
@@ -179,41 +178,42 @@ class MediaScanner(private val context: Context) {
     private class NewClassificationCache {
         val notes = mutableMapOf<String, Float>()
         val others = mutableMapOf<String, Float>()
+        private var processedCount = 0
 
-        fun addClassification(filePath: String, classification: Classification) {
+        fun addClassification(
+            filePath: String, classification: Classification, preferencesManager: PreferencesManager
+        ) {
             if (classification.label == "notes") {
                 notes[filePath] = classification.confidence
             } else {
                 others[filePath] = classification.confidence
             }
+
+            // Save progress every 10 files to preserve work during long scans
+            processedCount++
+            if (processedCount % 10 == 0) {
+                saveToCache(preferencesManager)
+            }
         }
-    }
 
-    /**
-     * Saves new classifications to persistent cache.
-     */
-    private fun saveNewClassifications(
-        newClassifications: NewClassificationCache,
-        existingNotes: Map<String, Float>,
-        existingOthers: Map<String, Float>
-    ) {
-        try {
-            val updatedNotes = existingNotes.toMutableMap().apply {
-                putAll(newClassifications.notes)
+        fun saveToCache(preferencesManager: PreferencesManager) {
+            try {
+                if (notes.isNotEmpty()) {
+                    val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableMap()
+                    cachedNotes.putAll(notes)
+                    preferencesManager.saveClassifiedNotesFiles(cachedNotes)
+                    notes.clear()
+                }
+
+                if (others.isNotEmpty()) {
+                    val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableMap()
+                    cachedOthers.putAll(others)
+                    preferencesManager.saveClassifiedOtherFiles(cachedOthers)
+                    others.clear()
+                }
+            } catch (e: Exception) {
+                Log.w("MediaScanner", "Failed to save progress at $processedCount files", e)
             }
-            val updatedOthers = existingOthers.toMutableMap().apply {
-                putAll(newClassifications.others)
-            }
-
-            preferencesManager.saveClassifiedNotesFiles(updatedNotes)
-            preferencesManager.saveClassifiedOtherFiles(updatedOthers)
-
-            Log.d(
-                TAG, "Saved ${newClassifications.notes.size} new note classifications, " +
-                        "${newClassifications.others.size} new other classifications"
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save new classifications", e)
         }
     }
 
@@ -335,7 +335,7 @@ class MediaScanner(private val context: Context) {
                         }
 
                         !isImagesDir && isPdfFile(file) -> {
-                            processPdfFile(file).firstOrNull()
+                            processPdfFile(file, newClassifications)
                         }
 
                         else -> null
@@ -344,7 +344,9 @@ class MediaScanner(private val context: Context) {
                     if (mediaFile != null) {
                         processedFilesInSession.add(filePath)
                         mediaFile.classification?.let { classification ->
-                            newClassifications.addClassification(filePath, classification)
+                            newClassifications.addClassification(
+                                filePath, classification, preferencesManager
+                            )
                         }
                         emit(mediaFile)
                     }
@@ -413,9 +415,7 @@ class MediaScanner(private val context: Context) {
      * Creates a MediaFile from cached image classification data.
      */
     private fun createCachedImageFile(
-        file: File,
-        cachedNotes: Map<String, Float>,
-        cachedOthers: Map<String, Float>
+        file: File, cachedNotes: Map<String, Float>, cachedOthers: Map<String, Float>
     ): MediaFile? {
         val filePath = file.absolutePath
 
@@ -440,17 +440,14 @@ class MediaScanner(private val context: Context) {
      * Creates a MediaFile from cached PDF classification data.
      */
     private fun createCachedPdfFile(
-        file: File,
-        cachedNotes: Map<String, Float>,
-        cachedOthers: Map<String, Float>
+        file: File, cachedNotes: Map<String, Float>, cachedOthers: Map<String, Float>
     ): MediaFile? {
         val filePath = file.absolutePath
 
         val classification = when {
             cachedNotes.containsKey(filePath) -> Classification("notes", cachedNotes[filePath]!!)
             cachedOthers.containsKey(filePath) -> Classification(
-                "not_notes",
-                cachedOthers[filePath]!!
+                "not_notes", cachedOthers[filePath]!!
             )
 
             else -> return null
@@ -502,14 +499,16 @@ class MediaScanner(private val context: Context) {
     /**
      * Processes a PDF file by sampling pages for classification.
      */
-    private fun processPdfFile(file: File): Flow<MediaFile> = flow {
-        try {
+    private suspend fun processPdfFile(
+        file: File, newClassifications: NewClassificationCache
+    ): MediaFile? {
+        return try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
                 .use { fileDescriptor ->
                     PdfRenderer(fileDescriptor).use { renderer ->
                         if (renderer.pageCount == 0) {
                             Log.w(TAG, "PDF has no pages: ${file.name}")
-                            return@flow
+                            return null
                         }
 
                         // Sample pages for classification (up to MAX_PDF_SAMPLE_PAGES)
@@ -523,15 +522,10 @@ class MediaScanner(private val context: Context) {
                             try {
                                 renderer.openPage(pageIndex).use { page ->
                                     val bitmap = createBitmap(
-                                        THUMBNAIL_SIZE,
-                                        THUMBNAIL_SIZE,
-                                        Bitmap.Config.ARGB_8888
+                                        THUMBNAIL_SIZE, THUMBNAIL_SIZE, Bitmap.Config.ARGB_8888
                                     )
                                     page.render(
-                                        bitmap,
-                                        null,
-                                        null,
-                                        PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                                        bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
                                     )
 
                                     val classification = classifierService.classifyImage(bitmap)
@@ -540,29 +534,30 @@ class MediaScanner(private val context: Context) {
                                 }
                             } catch (e: Exception) {
                                 Log.w(
-                                    TAG,
-                                    "Error processing PDF page $pageIndex for ${file.name}",
-                                    e
+                                    TAG, "Error processing PDF page $pageIndex for ${file.name}", e
                                 )
                             }
                         }
 
                         // Determine overall classification based on majority vote
                         val finalClassification = determineOverallClassification(classifications)
-
                         val mediaFile = createMediaFile(
-                            file,
-                            isImage = false,
-                            thumbnailUri = thumbnailUri
+                            file, isImage = false, thumbnailUri = thumbnailUri
                         ).apply {
                             classification = finalClassification
                         }
 
-                        emit(mediaFile)
+                        // Add to new classifications cache for batch saving
+                        newClassifications.addClassification(
+                            file.absolutePath, finalClassification, preferencesManager
+                        )
+
+                        mediaFile
                     }
                 }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing PDF file: ${file.name}", e)
+            null
         }
     }
 
@@ -577,15 +572,10 @@ class MediaScanner(private val context: Context) {
                         if (renderer.pageCount > 0) {
                             renderer.openPage(0).use { page ->
                                 val bitmap = createBitmap(
-                                    THUMBNAIL_SIZE,
-                                    THUMBNAIL_SIZE,
-                                    Bitmap.Config.ARGB_8888
+                                    THUMBNAIL_SIZE, THUMBNAIL_SIZE, Bitmap.Config.ARGB_8888
                                 )
                                 page.render(
-                                    bitmap,
-                                    null,
-                                    null,
-                                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                                    bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
                                 )
 
                                 // Save thumbnail to cache directory
@@ -638,9 +628,7 @@ class MediaScanner(private val context: Context) {
      * Creates a MediaFile instance from a File with proper metadata.
      */
     private fun createMediaFile(
-        file: File,
-        isImage: Boolean,
-        thumbnailUri: Uri? = null
+        file: File, isImage: Boolean, thumbnailUri: Uri? = null
     ): MediaFile {
         return MediaFile(
             uri = file.toUri(),
