@@ -51,11 +51,15 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LeadingIconTab
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -193,32 +197,32 @@ fun ResultsScreen(
 
     // Dialog to guide users to grant MANAGE_EXTERNAL_STORAGE permission
     if (showManageStorageDialog) {
-        AlertDialog(
-            onDismissRequest = { showManageStorageDialog = false },
-            title = { Text("Additional Permission Required") },
-            text = {
-                Text(
-                    "To access WhatsApp media folders, this app needs permission to manage external storage. " + "Please tap 'Open Settings' and grant the 'Allow access to manage all files' permission."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showManageStorageDialog = false
-                        val intent =
-                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                                data = "package:${context.packageName}".toUri()
-                            }
-                        context.startActivity(intent)
-                    }) {
-                    Text("Open Settings")
-                }
-            },
-            dismissButton = {
-                Button(onClick = { showManageStorageDialog = false }) {
-                    Text("Later")
-                }
-            })
+        AlertDialog(onDismissRequest = { showManageStorageDialog = false }, title = {
+            Text(
+                "Additional Permission Required", style = MaterialTheme.typography.headlineSmall
+            )
+        }, text = {
+            Text(
+                "To access WhatsApp media folders, this app needs permission to manage external storage. " + "Please tap 'Open Settings' and grant the 'Allow access to manage all files' permission.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }, confirmButton = {
+            Button(
+                onClick = {
+                    showManageStorageDialog = false
+                    val intent =
+                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = "package:${context.packageName}".toUri()
+                        }
+                    context.startActivity(intent)
+                }) {
+                Text("Open Settings", style = MaterialTheme.typography.labelLarge)
+            }
+        }, dismissButton = {
+            Button(onClick = { showManageStorageDialog = false }) {
+                Text("Later", style = MaterialTheme.typography.labelLarge)
+            }
+        })
     }
 
     if (showDeleteDialog) {
@@ -244,13 +248,13 @@ fun ResultsScreen(
                 }
             }, colors = if (selectedFiles.isNotEmpty()) {
                 // Apply primary color tint to app bar when items are selected
-                androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
                     actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                 )
             } else {
-                androidx.compose.material3.TopAppBarDefaults.topAppBarColors()
+                TopAppBarDefaults.topAppBarColors()
             }, actions = {
                 if (selectedFiles.isNotEmpty()) {
                     // Show delete button when items are selected
@@ -304,7 +308,7 @@ fun ResultsScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Scan")
+                        Text("Scan", style = MaterialTheme.typography.labelLarge)
                     }
 
                     // View toggle button
@@ -474,7 +478,7 @@ private fun ScanningContent(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            androidx.compose.material3.LinearProgressIndicator(
+            LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth(0.7f)
             )
         }
@@ -510,7 +514,7 @@ private fun ErrorStateContent(
             Spacer(modifier = Modifier.height(24.dp))
 
             Button(onClick = onRetry) {
-                Text("Retry Scan")
+                Text("Retry Scan", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -550,7 +554,7 @@ private fun PermissionDeniedContent() {
                     }
                     context.startActivity(intent)
                 }) {
-                Text("Open App Settings")
+                Text("Open App Settings", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -617,7 +621,7 @@ private fun ErrorMessageSnackbar(
     Box(
         modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter
     ) {
-        androidx.compose.material3.Surface(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
@@ -634,8 +638,8 @@ private fun ErrorMessageSnackbar(
                     modifier = Modifier.weight(1f)
                 )
 
-                androidx.compose.material3.TextButton(onClick = onDismiss) {
-                    Text("Dismiss")
+                TextButton(onClick = onDismiss) {
+                    Text("Dismiss", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -702,7 +706,11 @@ fun MediaGrid(
                     .height(300.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No files found in this category")
+                Text(
+                    "No files found in this category",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -1035,22 +1043,28 @@ fun DeleteConfirmationDialog(
                 is DeleteState.Deleting -> "Deleting Files..."
                 is DeleteState.Completed -> "Deletion Complete"
                 is DeleteState.Error -> "Deletion Error"
-            }
+            }, style = MaterialTheme.typography.headlineSmall
         )
     }, text = {
         Column {
             when (deleteState) {
                 is DeleteState.Idle -> {
-                    Text("Are you sure you want to delete $count selected files? This action cannot be undone.")
+                    Text(
+                        "Are you sure you want to delete $count selected files? This action cannot be undone.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
 
                 is DeleteState.Deleting -> {
                     val progress = deleteState.progress
-                    Text("Deleting ${progress.filesDeleted} of ${progress.totalFilesToDelete} files...")
+                    Text(
+                        "Deleting ${progress.filesDeleted} of ${progress.totalFilesToDelete} files...",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    androidx.compose.material3.LinearProgressIndicator(
+                    LinearProgressIndicator(
                         progress = { progress.filesDeleted.toFloat() / progress.totalFilesToDelete.toFloat() },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1082,9 +1096,15 @@ fun DeleteConfirmationDialog(
                     val errorCount = deleteState.errors.size
 
                     if (errorCount == 0) {
-                        Text("Successfully deleted all $successCount files.")
+                        Text(
+                            "Successfully deleted all $successCount files.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     } else {
-                        Text("Deleted $successCount of $totalCount files.\n$errorCount files could not be deleted.")
+                        Text(
+                            "Deleted $successCount of $totalCount files.\n$errorCount files could not be deleted.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
 
                         if (deleteState.errors.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(8.dp))
@@ -1122,7 +1142,10 @@ fun DeleteConfirmationDialog(
                 }
 
                 is DeleteState.Error -> {
-                    Text("An error occurred during deletion: ${deleteState.message}")
+                    Text(
+                        "An error occurred during deletion: ${deleteState.message}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
@@ -1132,7 +1155,7 @@ fun DeleteConfirmationDialog(
                 Button(
                     onClick = onConfirm
                 ) {
-                    Text("Delete")
+                    Text("Delete", style = MaterialTheme.typography.labelLarge)
                 }
             }
 
@@ -1144,7 +1167,7 @@ fun DeleteConfirmationDialog(
                 Button(
                     onClick = onDismiss
                 ) {
-                    Text("OK")
+                    Text("OK", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -1154,7 +1177,7 @@ fun DeleteConfirmationDialog(
                 Button(
                     onClick = onDismiss
                 ) {
-                    Text("Cancel")
+                    Text("Cancel", style = MaterialTheme.typography.labelLarge)
                 }
             }
 

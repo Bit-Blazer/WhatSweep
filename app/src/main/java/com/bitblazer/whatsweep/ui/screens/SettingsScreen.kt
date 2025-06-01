@@ -43,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bitblazer.whatsweep.util.PreferencesManager
 import kotlinx.coroutines.launch
@@ -206,7 +205,7 @@ private fun ScanSettingsCard(
                         contentDescription = null,
                         modifier = Modifier.padding(end = 8.dp)
                     )
-                    Text("Clear Cache")
+                    Text("Clear Cache", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -251,8 +250,7 @@ private fun ClassificationSettingsCard(
 
                     Text(
                         text = "${(confidenceThreshold * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -343,9 +341,7 @@ private fun AboutCard(modifier: Modifier = Modifier) {
                     text = "Version", style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = "1.0.0",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
+                    text = "1.0.0", style = MaterialTheme.typography.labelLarge
                 )
             }
         }
