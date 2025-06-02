@@ -1,6 +1,6 @@
 [versions]
 accompanistPermissions = "0.32.0"
-agp = "8.10.0"
+agp = "8.10.1"
 coilCompose = "2.6.0"
 common = "18.11.0"
 exifinterface = "1.4.1"

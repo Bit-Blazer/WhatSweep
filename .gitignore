@@ -31,6 +31,9 @@ render.experimental.xml
 *.keystore
 keystore
 
+# Ignore auto-generated version file
+/version.properties
+
 # Google Services (e.g. APIs or Firebase)
 google-services.json
 
