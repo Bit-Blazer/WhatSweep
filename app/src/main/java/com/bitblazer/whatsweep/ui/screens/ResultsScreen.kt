@@ -252,7 +252,7 @@ fun ResultsScreen(
                     }
                 }, navigationIcon = {
                     if (selectedFiles.isNotEmpty()) {
-                        IconButton(onClick = { /* unselect */ }) {
+                        IconButton(onClick = viewModel::clearSelection) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back"
                             )

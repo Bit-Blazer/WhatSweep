@@ -433,6 +433,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Clears all selected files without deleting them.
+     */
+    fun clearSelection() {
+        // Update selection state in lists
+        _notesFiles.value = _notesFiles.value.map { it.copy(isSelected = false) }
+        _otherFiles.value = _otherFiles.value.map { it.copy(isSelected = false) }
+        _selectedFiles.value = emptyList()
+
+        Log.d(TAG, "Selection cleared")
+    }
+
+    /**
      * Clears the current error message.
      */
     fun clearError() {
