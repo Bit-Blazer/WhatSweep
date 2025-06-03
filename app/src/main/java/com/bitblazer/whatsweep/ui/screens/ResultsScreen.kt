@@ -88,6 +88,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.bitblazer.whatsweep.model.ClassificationLabel
+import com.bitblazer.whatsweep.model.FileType
 import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.util.PreferencesManager
 import com.bitblazer.whatsweep.viewmodel.DeleteState
@@ -98,16 +100,14 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-@OptIn(
-    ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class
-)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun ResultsScreen(
-    viewModel: MainViewModel, onNavigateToSettings: () -> Unit, modifier: Modifier = Modifier
+    viewModel: MainViewModel,
+    onNavigateToSettings: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val prefsManager = remember { PreferencesManager(context) }
-    val showConfidenceScores = remember { prefsManager.showConfidenceScores }
 
     // Collect state using proper StateFlow collectors
     val scanState by viewModel.scanState.collectAsStateWithLifecycle()
@@ -140,9 +140,7 @@ fun ResultsScreen(
     // Request storage permissions based on Android version
     val permissionsList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         // For Android 13+ (API 33+), use granular media permissions
-        listOf(
-            Manifest.permission.READ_MEDIA_IMAGES,
-        )
+        listOf(Manifest.permission.READ_MEDIA_IMAGES)
     } else {
         // For Android 12L and below, use READ_EXTERNAL_STORAGE
         listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -184,9 +182,7 @@ fun ResultsScreen(
         }
 
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Check permissions using both readMediaPermissions and isExternalStorageManager
@@ -195,7 +191,7 @@ fun ResultsScreen(
         hasBasicPermissions && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || isExternalStorageManager)
     val tabs = listOf(
         "Notes (${notesFiles.size})" to Icons.AutoMirrored.Outlined.Notes,
-        "Others (${otherFiles.size})" to Icons.Outlined.AllInclusive,
+        "Others (${otherFiles.size})" to Icons.Outlined.AllInclusive
     )
 
     // Dialog to guide users to grant MANAGE_EXTERNAL_STORAGE permission
@@ -232,9 +228,7 @@ fun ResultsScreen(
         DeleteConfirmationDialog(
             count = selectedFiles.size,
             deleteState = deleteState,
-            onConfirm = {
-                viewModel.deleteSelectedFiles()
-            },
+            onConfirm = { viewModel.deleteSelectedFiles() },
             onDismiss = {
                 showDeleteDialog = false
                 viewModel.resetDeleteState()
@@ -254,7 +248,8 @@ fun ResultsScreen(
                     if (selectedFiles.isNotEmpty()) {
                         IconButton(onClick = viewModel::clearSelection) {
                             Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back"
+                                Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = "Clear selection"
                             )
                         }
                     }
@@ -345,7 +340,7 @@ fun ResultsScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-        ) {            // Handle different scan states
+        ) { // Handle different scan states
             when (scanState) {
                 is ScanState.Idle -> {
                     if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
@@ -359,7 +354,6 @@ fun ResultsScreen(
                             notesFiles = notesFiles,
                             otherFiles = otherFiles,
                             viewModel = viewModel,
-                            showConfidenceScores = showConfidenceScores,
                             isGridView = isGridView,
                             coroutineScope = coroutineScope
                         )
@@ -382,7 +376,6 @@ fun ResultsScreen(
                         notesFiles = notesFiles,
                         otherFiles = otherFiles,
                         viewModel = viewModel,
-                        showConfidenceScores = showConfidenceScores,
                         isGridView = isGridView,
                         coroutineScope = coroutineScope
                     )
@@ -397,8 +390,7 @@ fun ResultsScreen(
 
             // Show error message if present
             errorMessage?.let { error ->
-                ErrorMessageSnackbar(
-                    message = error, onDismiss = { viewModel.clearError() })
+                ErrorMessageSnackbar(message = error, onDismiss = { viewModel.clearError() })
             }
 
             // Permission denied state
@@ -411,9 +403,7 @@ fun ResultsScreen(
 
 @Composable
 private fun EmptyStateContent(hasAllPermissions: Boolean) {
-    Box(
-        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
         ) {
@@ -454,11 +444,11 @@ private fun EmptyStateContent(hasAllPermissions: Boolean) {
 
 @Composable
 private fun ScanningContent(
-    scanState: ScanState.Scanning, notesFiles: List<MediaFile>, otherFiles: List<MediaFile>
+    scanState: ScanState.Scanning,
+    notesFiles: List<MediaFile>,
+    otherFiles: List<MediaFile>,
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
         ) {
@@ -466,7 +456,7 @@ private fun ScanningContent(
                 text = "Scanning and classifying files...",
                 style = MaterialTheme.typography.titleMedium
             )
-            Spacer(modifier = Modifier.height(8.dp))            // Show processed file count
+            Spacer(modifier = Modifier.height(8.dp)) // Show processed file count
             Text(
                 text = buildString {
                     append("Processed: ${scanState.progress.filesProcessed}")
@@ -500,14 +490,13 @@ private fun ScanningContent(
             if (scanState.progress.totalFilesFound > 0) {
                 // Show determinate progress when we know the total
                 LinearProgressIndicator(
-                    progress = { scanState.progress.filesProcessed.toFloat() / scanState.progress.totalFilesFound.toFloat() },
-                    modifier = Modifier.fillMaxWidth(0.7f)
+                    progress = {
+                        scanState.progress.filesProcessed.toFloat() / scanState.progress.totalFilesFound.toFloat()
+                    }, modifier = Modifier.fillMaxWidth(0.7f)
                 )
             } else {
                 // Show indeterminate progress when total is unknown
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth(0.7f)
-                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth(0.7f))
             }
         }
     }
@@ -515,11 +504,10 @@ private fun ScanningContent(
 
 @Composable
 private fun ErrorStateContent(
-    errorMessage: String, onRetry: () -> Unit
+    errorMessage: String,
+    onRetry: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
         ) {
@@ -542,7 +530,9 @@ private fun ErrorStateContent(
             Spacer(modifier = Modifier.height(24.dp))
 
             Button(onClick = onRetry) {
-                Text("Retry Scan", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Retry Scan", style = MaterialTheme.typography.labelLarge
+                )
             }
         }
     }
@@ -552,9 +542,7 @@ private fun ErrorStateContent(
 private fun PermissionDeniedContent() {
     val context = LocalContext.current
 
-    Box(
-        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
         ) {
@@ -596,38 +584,30 @@ private fun ContentTabs(
     notesFiles: List<MediaFile>,
     otherFiles: List<MediaFile>,
     viewModel: MainViewModel,
-    showConfidenceScores: Boolean,
     isGridView: Boolean,
-    coroutineScope: CoroutineScope
+    coroutineScope: CoroutineScope,
 ) {
-    PrimaryTabRow(
-        selectedTabIndex = pagerState.currentPage, divider = {
-            HorizontalDivider()
-        }) {
+    PrimaryTabRow(selectedTabIndex = pagerState.currentPage, divider = { HorizontalDivider() }) {
         tabs.forEachIndexed { index, (title, icon) ->
-            LeadingIconTab(selected = pagerState.currentPage == index, onClick = {
-                coroutineScope.launch {
-                    pagerState.animateScrollToPage(index)
-                }
-            }, text = { Text(title) }, icon = { Icon(icon, contentDescription = null) })
+            LeadingIconTab(
+                selected = pagerState.currentPage == index,
+                onClick = { coroutineScope.launch { pagerState.animateScrollToPage(index) } },
+                text = { Text(title) },
+                icon = { Icon(icon, contentDescription = null) })
         }
     }
 
-    HorizontalPager(
-        state = pagerState,
-    ) { page ->
+    HorizontalPager(state = pagerState) { page ->
         when (page) {
             0 -> MediaGrid(
                 mediaFiles = notesFiles,
                 onItemClick = { viewModel.toggleSelection(it) },
-                showConfidenceScores = showConfidenceScores,
                 isGridView = isGridView
             )
 
             1 -> MediaGrid(
                 mediaFiles = otherFiles,
                 onItemClick = { viewModel.toggleSelection(it) },
-                showConfidenceScores = showConfidenceScores,
                 isGridView = isGridView
             )
         }
@@ -636,7 +616,8 @@ private fun ContentTabs(
 
 @Composable
 private fun ErrorMessageSnackbar(
-    message: String, onDismiss: () -> Unit
+    message: String,
+    onDismiss: () -> Unit,
 ) {
     LaunchedEffect(message) {
         // Auto dismiss after 5 seconds
@@ -646,9 +627,7 @@ private fun ErrorMessageSnackbar(
 
     // This would ideally be implemented using SnackbarHost, but for simplicity
     // we'll show it as a surface at the bottom
-    Box(
-        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -678,13 +657,11 @@ private fun ErrorMessageSnackbar(
 fun MediaGrid(
     mediaFiles: List<MediaFile>,
     onItemClick: (MediaFile) -> Unit,
-    showConfidenceScores: Boolean = false,
     isGridView: Boolean = true,
-    modifier: Modifier = Modifier
 ) {
     // Group files by type (images first, then PDFs)
-    val imageFiles = mediaFiles.filter { it.isImage }
-    val pdfFiles = mediaFiles.filter { it.isPdf }
+    val imageFiles = mediaFiles.filter { it.type == FileType.IMAGE }
+    val pdfFiles = mediaFiles.filter { it.type == FileType.PDF }
 
     if (mediaFiles.isNotEmpty()) {
         if (isGridView) {
@@ -694,7 +671,7 @@ fun MediaGrid(
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth()
             ) {
                 // Images Section
                 if (imageFiles.isNotEmpty()) {
@@ -702,12 +679,8 @@ fun MediaGrid(
                         SectionTitle(title = "Images (${imageFiles.size})")
                     }
 
-                    items(items = imageFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-                        MediaGridItem(
-                            mediaFile = mediaFile,
-                            onClick = { onItemClick(mediaFile) },
-                            showConfidenceScore = showConfidenceScores
-                        )
+                    items(items = imageFiles) { mediaFile ->
+                        MediaGridItem(mediaFile = mediaFile, onClick = { onItemClick(mediaFile) })
                     }
                 }
 
@@ -717,12 +690,8 @@ fun MediaGrid(
                         SectionTitle(title = "PDF Documents (${pdfFiles.size})")
                     }
 
-                    items(items = pdfFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-                        MediaGridItem(
-                            mediaFile = mediaFile,
-                            onClick = { onItemClick(mediaFile) },
-                            showConfidenceScore = showConfidenceScores
-                        )
+                    items(items = pdfFiles) { mediaFile ->
+                        MediaGridItem(mediaFile = mediaFile, onClick = { onItemClick(mediaFile) })
                     }
                 }
             }
@@ -731,42 +700,28 @@ fun MediaGrid(
             LazyColumn(
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize()
             ) {
                 // Images Section
                 if (imageFiles.isNotEmpty()) {
-                    item {
-                        SectionTitle(title = "Images (${imageFiles.size})")
-                    }
+                    item { SectionTitle(title = "Images (${imageFiles.size})") }
 
-                    items(items = imageFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-                        MediaListItem(
-                            mediaFile = mediaFile,
-                            onClick = { onItemClick(mediaFile) },
-                            showConfidenceScore = showConfidenceScores
-                        )
+                    items(items = imageFiles) { mediaFile ->
+                        MediaListItem(mediaFile = mediaFile, onClick = { onItemClick(mediaFile) })
                     }
                 }
 
                 // Add spacing between sections
                 if (imageFiles.isNotEmpty() && pdfFiles.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
+                    item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
 
                 // PDF Section
                 if (pdfFiles.isNotEmpty()) {
-                    item {
-                        SectionTitle(title = "PDF Documents (${pdfFiles.size})")
-                    }
+                    item { SectionTitle(title = "PDF Documents (${pdfFiles.size})") }
 
-                    items(items = pdfFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-                        MediaListItem(
-                            mediaFile = mediaFile,
-                            onClick = { onItemClick(mediaFile) },
-                            showConfidenceScore = showConfidenceScores
-                        )
+                    items(items = pdfFiles) { mediaFile ->
+                        MediaListItem(mediaFile = mediaFile, onClick = { onItemClick(mediaFile) })
                     }
                 }
             }
@@ -802,13 +757,13 @@ fun SectionTitle(title: String) {
 fun MediaGridItem(
     mediaFile: MediaFile,
     onClick: () -> Unit,
-    showConfidenceScore: Boolean = false,
-    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val prefsManager = remember { PreferencesManager(context) }
+    val showConfidenceScores = remember { prefsManager.showConfidenceScores }
 
     Box(
-        modifier = modifier
+        modifier = Modifier
             .aspectRatio(1f)
             .clip(MaterialTheme.shapes.medium)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
@@ -821,19 +776,19 @@ fun MediaGridItem(
     ) {
         AsyncImage(
             model = ImageRequest.Builder(context)
-                .data(if (mediaFile.isPdf && mediaFile.thumbnailUri != null) mediaFile.thumbnailUri else mediaFile.uri)
+                .data(if (mediaFile.type == FileType.PDF && mediaFile.thumbnailUri != null) mediaFile.thumbnailUri else mediaFile.file.toUri())
                 .crossfade(true).build(),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
-            error = if (mediaFile.isPdf) {
+            error = if (mediaFile.type == FileType.PDF) {
                 // Fallback icon for PDFs without thumbnails
                 painterResource(id = android.R.drawable.ic_menu_report_image)
             } else null
         )
 
         // File type badge (PDF)
-        if (mediaFile.isPdf) {
+        if (mediaFile.type == FileType.PDF) {
             Box(
                 modifier = Modifier
                     .padding(4.dp)
@@ -868,9 +823,7 @@ fun MediaGridItem(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = mediaFile.formattedSize,
                         style = MaterialTheme.typography.bodySmall,
@@ -878,11 +831,11 @@ fun MediaGridItem(
                         modifier = Modifier.weight(1f)
                     )
 
-                    if (showConfidenceScore && mediaFile.classification != null) {
+                    if (showConfidenceScores) {
                         Text(
-                            text = mediaFile.confidencePercentage,
+                            text = mediaFile.classification.confidencePercentage,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (mediaFile.isNotes) MaterialTheme.colorScheme.primary
+                            color = if (mediaFile.classification.labelType == ClassificationLabel.NOTES) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.error
                         )
                     }
@@ -910,7 +863,7 @@ fun MediaGridItem(
             ) {
                 Icon(
                     Icons.Outlined.Check,
-                    contentDescription = "Selected",
+                    contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.align(Alignment.Center)
                 )
@@ -923,13 +876,13 @@ fun MediaGridItem(
 fun MediaListItem(
     mediaFile: MediaFile,
     onClick: () -> Unit,
-    showConfidenceScore: Boolean = false,
-    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val prefsManager = remember { PreferencesManager(context) }
+    val showConfidenceScores = remember { prefsManager.showConfidenceScores }
 
     Row(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
             .background(
@@ -953,12 +906,14 @@ fun MediaListItem(
         ) {
             AsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(if (mediaFile.isPdf && mediaFile.thumbnailUri != null) mediaFile.thumbnailUri else mediaFile.uri)
-                    .crossfade(true).build(),
+                .data(
+                    if (mediaFile.type == FileType.PDF && mediaFile.thumbnailUri != null) mediaFile.thumbnailUri
+                    else mediaFile.file.toUri()
+                ).crossfade(true).build(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
-                error = if (mediaFile.isPdf) {
+                error = if (mediaFile.type == FileType.PDF) {
                     painterResource(id = android.R.drawable.ic_menu_report_image)
                 } else null
             )
@@ -976,7 +931,7 @@ fun MediaListItem(
                 ) {
                     Icon(
                         Icons.Outlined.Check,
-                        contentDescription = "Selected",
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier
                             .size(18.dp)
@@ -999,16 +954,14 @@ fun MediaListItem(
                 overflow = TextOverflow.Ellipsis
             )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = mediaFile.formattedSize,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (mediaFile.isPdf) {
+                if (mediaFile.type == FileType.PDF) {
                     Box(
                         modifier = Modifier
                             .padding(start = 8.dp)
@@ -1029,11 +982,11 @@ fun MediaListItem(
         }
 
         // Confidence score
-        if (showConfidenceScore && mediaFile.classification != null) {
+        if (showConfidenceScores) {
             Text(
-                text = mediaFile.confidencePercentage,
+                text = mediaFile.classification.confidencePercentage,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (mediaFile.isNotes) MaterialTheme.colorScheme.primary
+                color = if (mediaFile.classification.labelType == ClassificationLabel.NOTES) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(start = 8.dp)
             )
@@ -1043,7 +996,10 @@ fun MediaListItem(
 
 @Composable
 fun DeleteConfirmationDialog(
-    count: Int, deleteState: DeleteState, onConfirm: () -> Unit, onDismiss: () -> Unit
+    count: Int,
+    deleteState: DeleteState,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
     // Auto-dismiss dialog when deletion is completed successfully
     LaunchedEffect(deleteState) {
@@ -1087,8 +1043,9 @@ fun DeleteConfirmationDialog(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     LinearProgressIndicator(
-                        progress = { progress.filesDeleted.toFloat() / progress.totalFilesToDelete.toFloat() },
-                        modifier = Modifier.fillMaxWidth()
+                        progress = {
+                            progress.filesDeleted.toFloat() / progress.totalFilesToDelete.toFloat()
+                        }, modifier = Modifier.fillMaxWidth()
                     )
 
                     if (progress.currentFileName.isNotEmpty()) {
@@ -1148,8 +1105,6 @@ fun DeleteConfirmationDialog(
                                             .verticalScroll(errorScrollState)
                                             .padding(end = 12.dp)
                                     )
-
-
                                 }
                             } else {
                                 // Show simple error list for few errors
@@ -1174,9 +1129,7 @@ fun DeleteConfirmationDialog(
     }, confirmButton = {
         when (deleteState) {
             is DeleteState.Idle -> {
-                Button(
-                    onClick = onConfirm
-                ) {
+                Button(onClick = onConfirm) {
                     Text("Delete", style = MaterialTheme.typography.labelLarge)
                 }
             }
@@ -1185,20 +1138,20 @@ fun DeleteConfirmationDialog(
                 // No confirm button while deleting
             }
 
-            is DeleteState.Completed, is DeleteState.Error -> {
-                Button(
-                    onClick = onDismiss
-                ) {
-                    Text("OK", style = MaterialTheme.typography.labelLarge)
+            is DeleteState.Completed,
+            is DeleteState.Error,
+                -> {
+                Button(onClick = onDismiss) {
+                    Text(
+                        "OK", style = MaterialTheme.typography.labelLarge
+                    )
                 }
             }
         }
     }, dismissButton = {
         when (deleteState) {
             is DeleteState.Idle -> {
-                Button(
-                    onClick = onDismiss
-                ) {
+                Button(onClick = onDismiss) {
                     Text("Cancel", style = MaterialTheme.typography.labelLarge)
                 }
             }
@@ -1207,7 +1160,9 @@ fun DeleteConfirmationDialog(
                 // No dismiss button while deleting to prevent accidental cancellation
             }
 
-            is DeleteState.Completed, is DeleteState.Error -> {
+            is DeleteState.Completed,
+            is DeleteState.Error,
+                -> {
                 // No dismiss button, only OK button
             }
         }

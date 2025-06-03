@@ -9,7 +9,6 @@ import com.bitblazer.whatsweep.ui.AppNavigation
 import com.bitblazer.whatsweep.ui.theme.AppTheme
 import com.bitblazer.whatsweep.viewmodel.MainViewModel
 
-
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 

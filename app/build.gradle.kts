@@ -79,6 +79,7 @@ android {
     buildFeatures {
         compose = true
         mlModelBinding = true
+        buildConfig = true
     }
 }
 
@@ -101,9 +102,6 @@ dependencies {
 
     // Image loading
     implementation(libs.coil.compose)
-
-    // EXIF data handling
-    implementation(libs.exifinterface)
 
     // Runtime permissions
     implementation(libs.accompanist.permissions)

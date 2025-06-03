@@ -12,7 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun AppTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit
+    darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit,
 ) {
     // Dynamic color is available on Android 12+ (API 31+)
     val dynamicColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -30,4 +30,3 @@ fun AppTheme(
         colorScheme = colorScheme, content = content, typography = AppTypography
     )
 }
-

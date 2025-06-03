@@ -198,23 +198,22 @@ class MediaScanner(private val context: Context) {
 
             // Save any remaining classifications to cache
             newClassifications.saveToCache(preferencesManager)
-
         } catch (e: Exception) {
             Log.e(TAG, "Error during WhatsApp folder scan", e)
             throw e
         }
     }.flowOn(Dispatchers.IO)
 
-    /**
-     * Helper class to track new classifications during a scan session.
-     */
+    /** Helper class to track new classifications during a scan session. */
     private class NewClassificationCache {
         val notes = mutableMapOf<String, Float>()
         val others = mutableMapOf<String, Float>()
         private var processedCount = 0
 
         fun addClassification(
-            filePath: String, classification: Classification, preferencesManager: PreferencesManager
+            filePath: String,
+            classification: Classification,
+            preferencesManager: PreferencesManager,
         ) {
             if (classification.label == "notes") {
                 notes[filePath] = classification.confidence
@@ -317,7 +316,7 @@ class MediaScanner(private val context: Context) {
         isImagesDir: Boolean,
         cachedNotes: Map<String, Float>,
         cachedOthers: Map<String, Float>,
-        newClassifications: NewClassificationCache
+        newClassifications: NewClassificationCache,
     ): Flow<MediaFile> = flow {
         val files = directory.listFiles() ?: run {
             Log.w(TAG, "Cannot list files in directory: ${directory.absolutePath}")
@@ -339,9 +338,7 @@ class MediaScanner(private val context: Context) {
                     cachedNotes = cachedNotes,
                     cachedOthers = cachedOthers,
                     newClassifications = newClassifications
-                ).collect { mediaFile ->
-                    emit(mediaFile)
-                }
+                ).collect { mediaFile -> emit(mediaFile) }
             } else {
                 // Process individual files
                 val filePath = file.absolutePath
@@ -372,7 +369,7 @@ class MediaScanner(private val context: Context) {
 
                     if (mediaFile != null) {
                         processedFilesInSession.add(filePath)
-                        mediaFile.classification?.let { classification ->
+                        mediaFile.classification.let { classification ->
                             newClassifications.addClassification(
                                 filePath, classification, preferencesManager
                             )
@@ -387,14 +384,12 @@ class MediaScanner(private val context: Context) {
         }
     }
 
-    /**
-     * Emits cached files that still exist on the filesystem.
-     */
+    /** Emits cached files that still exist on the filesystem. */
     private fun emitCachedFiles(
         directory: File,
         isImagesDir: Boolean,
         cachedNotes: Map<String, Float>,
-        cachedOthers: Map<String, Float>
+        cachedOthers: Map<String, Float>,
     ): Flow<MediaFile> = flow {
         val files = directory.listFiles() ?: return@flow
 
@@ -440,23 +435,23 @@ class MediaScanner(private val context: Context) {
         }
     }
 
-    /**
-     * Creates a MediaFile from cached image classification data.
-     */
+    /** Creates a MediaFile from cached image classification data. */
     private fun createCachedImageFile(
-        file: File, cachedNotes: Map<String, Float>, cachedOthers: Map<String, Float>
+        file: File,
+        cachedNotes: Map<String, Float>,
+        cachedOthers: Map<String, Float>,
     ): MediaFile? {
         val filePath = file.absolutePath
 
         return when {
             cachedNotes.containsKey(filePath) -> {
-                createMediaFile(file, isImage = true).apply {
+                createMediaFile(file).apply {
                     classification = Classification("notes", cachedNotes[filePath]!!)
                 }
             }
 
             cachedOthers.containsKey(filePath) -> {
-                createMediaFile(file, isImage = true).apply {
+                createMediaFile(file).apply {
                     classification = Classification("not_notes", cachedOthers[filePath]!!)
                 }
             }
@@ -465,16 +460,19 @@ class MediaScanner(private val context: Context) {
         }
     }
 
-    /**
-     * Creates a MediaFile from cached PDF classification data.
-     */
+    /** Creates a MediaFile from cached PDF classification data. */
     private fun createCachedPdfFile(
-        file: File, cachedNotes: Map<String, Float>, cachedOthers: Map<String, Float>
+        file: File,
+        cachedNotes: Map<String, Float>,
+        cachedOthers: Map<String, Float>,
     ): MediaFile? {
         val filePath = file.absolutePath
 
         val classification = when {
-            cachedNotes.containsKey(filePath) -> Classification("notes", cachedNotes[filePath]!!)
+            cachedNotes.containsKey(filePath) -> Classification(
+                "notes", cachedNotes[filePath]!!
+            )
+
             cachedOthers.containsKey(filePath) -> Classification(
                 "not_notes", cachedOthers[filePath]!!
             )
@@ -485,31 +483,25 @@ class MediaScanner(private val context: Context) {
         // Generate thumbnail for PDF
         val thumbnailUri = generatePdfThumbnail(file)
 
-        return createMediaFile(file, isImage = false, thumbnailUri = thumbnailUri).apply {
+        return createMediaFile(file, thumbnailUri = thumbnailUri).apply {
             this.classification = classification
         }
     }
 
-    /**
-     * Checks if a file is a supported image format.
-     */
+    /** Checks if a file is a supported image format. */
     private fun isImageFile(file: File): Boolean {
         return SUPPORTED_IMAGE_EXTENSIONS.contains(file.extension.lowercase())
     }
 
-    /**
-     * Checks if a file is a PDF document.
-     */
+    /** Checks if a file is a PDF document. */
     private fun isPdfFile(file: File): Boolean {
         return file.extension.equals("pdf", ignoreCase = true)
     }
 
-    /**
-     * Processes an image file through ML classification.
-     */
+    /** Processes an image file through ML classification. */
     private suspend fun processImageFile(file: File): MediaFile? {
         return try {
-            val mediaFile = createMediaFile(file, isImage = true)
+            val mediaFile = createMediaFile(file)
             val bitmap = BitmapFactory.decodeFile(file.absolutePath)
 
             if (bitmap != null) {
@@ -525,11 +517,10 @@ class MediaScanner(private val context: Context) {
         }
     }
 
-    /**
-     * Processes a PDF file by sampling pages for classification.
-     */
+    /** Processes a PDF file by sampling pages for classification. */
     private suspend fun processPdfFile(
-        file: File, newClassifications: NewClassificationCache
+        file: File,
+        newClassifications: NewClassificationCache,
     ): MediaFile? {
         return try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -570,9 +561,7 @@ class MediaScanner(private val context: Context) {
 
                         // Determine overall classification based on majority vote
                         val finalClassification = determineOverallClassification(classifications)
-                        val mediaFile = createMediaFile(
-                            file, isImage = false, thumbnailUri = thumbnailUri
-                        ).apply {
+                        val mediaFile = createMediaFile(file, thumbnailUri = thumbnailUri).apply {
                             classification = finalClassification
                         }
 
@@ -590,9 +579,7 @@ class MediaScanner(private val context: Context) {
         }
     }
 
-    /**
-     * Generates a thumbnail for a PDF file.
-     */
+    /** Generates a thumbnail for a PDF file. */
     private fun generatePdfThumbnail(file: File): Uri? {
         return try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -628,10 +615,10 @@ class MediaScanner(private val context: Context) {
         }
     }
 
-    /**
-     * Determines overall classification from multiple page classifications using majority vote.
-     */
-    private fun determineOverallClassification(classifications: List<Classification>): Classification {
+    /** Determines overall classification from multiple page classifications using majority vote. */
+    private fun determineOverallClassification(
+        classifications: List<Classification>,
+    ): Classification {
         if (classifications.isEmpty()) {
             return Classification("unknown", 0.0f)
         }
@@ -653,27 +640,13 @@ class MediaScanner(private val context: Context) {
         return Classification(label, confidence)
     }
 
-    /**
-     * Creates a MediaFile instance from a File with proper metadata.
-     */
-    private fun createMediaFile(
-        file: File, isImage: Boolean, thumbnailUri: Uri? = null
-    ): MediaFile {
-        return MediaFile(
-            uri = file.toUri(),
-            file = file,
-            name = file.name,
-            path = file.absolutePath,
-            size = file.length(),
-            isImage = isImage,
-            isPdf = !isImage,
-            thumbnailUri = thumbnailUri
-        )
+    /** Creates a MediaFile instance from a File with proper metadata. */
+    private fun createMediaFile(file: File, thumbnailUri: Uri? = null): MediaFile {
+        return MediaFile(file = file, thumbnailUri = thumbnailUri)
     }
 
     /**
-     * Releases resources when MediaScanner is no longer needed.
-     * Call this to prevent memory leaks.
+     * Releases resources when MediaScanner is no longer needed. Call this to prevent memory leaks.
      */
     fun onDestroy() {
         try {

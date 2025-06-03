@@ -11,9 +11,8 @@ import com.google.gson.Gson
  * Handles storage and retrieval of user settings and file classification cache.
  */
 class PreferencesManager(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences(
-        PREFERENCES_NAME, Context.MODE_PRIVATE
-    )
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     private val gson = Gson()
 
@@ -30,11 +29,12 @@ class PreferencesManager(context: Context) {
         set(value) = prefs.edit { putFloat(KEY_CONFIDENCE_THRESHOLD, value) }
 
     /**
-     * Data class representing the classification cache.
-     * Contains maps for notes and other classifications with their confidence scores.
+     * Data class representing the classification cache. Contains maps for notes and other
+     * classifications with their confidence scores.
      */
     data class ClassificationCache(
-        val notes: Map<String, Float> = emptyMap(), val others: Map<String, Float> = emptyMap()
+        val notes: Map<String, Float> = emptyMap(),
+        val others: Map<String, Float> = emptyMap(),
     )
 
     var cache: ClassificationCache

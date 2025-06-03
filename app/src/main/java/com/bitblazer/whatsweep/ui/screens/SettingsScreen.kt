@@ -3,7 +3,6 @@ package com.bitblazer.whatsweep.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -15,14 +14,13 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
@@ -41,18 +39,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.bitblazer.whatsweep.BuildConfig
 import com.bitblazer.whatsweep.util.PreferencesManager
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
-    onNavigateUp: () -> Unit, modifier: Modifier = Modifier
-) {
+fun SettingsScreen(onNavigateUp: () -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -64,27 +59,21 @@ fun SettingsScreen(
     var confidenceThreshold by remember { mutableFloatStateOf(prefsManager.confidenceThreshold) }
 
     Scaffold(topBar = {
-        TopAppBar(title = {
-            Text(
-                text = "Settings", modifier = Modifier.semantics {
-                    contentDescription = "Settings screen"
-                })
-        }, navigationIcon = {
-            IconButton(
-                onClick = onNavigateUp, modifier = Modifier.semantics {
+        TopAppBar(title = { Text(text = "Settings") }, navigationIcon = {
+            IconButton(onClick = onNavigateUp) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Navigate back to main screen"
-                }) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                )
             }
         })
     }, snackbarHost = { SnackbarHost(snackbarHostState) }) { paddingValues ->
         Column(
-            modifier = modifier
-                .fillMaxSize()
+            modifier = Modifier
                 .padding(paddingValues)
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Scan Settings Section
             SettingsSection(title = "Scan Settings") {
@@ -93,20 +82,12 @@ fun SettingsScreen(
                     onIncludePdfScanningChange = { newValue ->
                         includePdfScanning = newValue
                         prefsManager.includePdfScanning = newValue
-                        coroutineScope.launch {
-                            snackbarHostState.showSnackbar(
-                                message = if (newValue) "PDF scanning enabled" else "PDF scanning disabled"
-                            )
-                        }
                     },
                     onClearCache = {
                         coroutineScope.launch {
-                            try {
-                                prefsManager.clearCache()
-                                snackbarHostState.showSnackbar("Classification cache cleared successfully")
-                            } catch (e: Exception) {
-                                snackbarHostState.showSnackbar("Failed to clear cache: ${e.message}")
-                            }
+                            prefsManager.clearCache()
+                            context.cacheDir.deleteRecursively()
+                            snackbarHostState.showSnackbar("Cache cleared successfully")
                         }
                     })
             }
@@ -127,18 +108,14 @@ fun SettingsScreen(
             }
 
             // About Section
-            SettingsSection(title = "About") {
-                AboutCard()
-            }
+            SettingsSection(title = "About") { AboutCard() }
         }
     }
 }
 
 @Composable
-private fun SettingsSection(
-    title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit
-) {
-    Column(modifier = modifier.fillMaxWidth()) {
+private fun SettingsSection(title: String, content: @Composable () -> Unit) {
+    Column {
         Text(
             text = title,
             style = MaterialTheme.typography.titleLarge,
@@ -154,13 +131,8 @@ private fun ScanSettingsCard(
     includePdfScanning: Boolean,
     onIncludePdfScanningChange: (Boolean) -> Unit,
     onClearCache: () -> Unit,
-    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
+    Card {
         Column(
             modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -173,33 +145,18 @@ private fun ScanSettingsCard(
 
             HorizontalDivider()
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Outlined.Delete,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Clear Classification Cache",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    text = "Clear Classification Cache",
+                    style = MaterialTheme.typography.titleMedium
+                )
 
                 Text(
                     text = "Clears the saved classification data. Next scan will process all files again.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.bodyMedium
                 )
 
-                OutlinedButton(
-                    onClick = onClearCache, modifier = Modifier.fillMaxWidth()
-                ) {
+                Button(onClick = onClearCache, modifier = Modifier.fillMaxWidth()) {
                     Icon(
                         Icons.Outlined.Delete,
                         contentDescription = null,
@@ -218,30 +175,22 @@ private fun ClassificationSettingsCard(
     onShowConfidenceScoresChange: (Boolean) -> Unit,
     confidenceThreshold: Float,
     onConfidenceThresholdChange: (Float) -> Unit,
-    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
+    Card {
         Column(
             modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SettingsSwitchItem(
                 title = "Show confidence scores",
-                description = "Display classification confidence percentages on results screen",
+                description = "Display confidence scores on results screen",
                 checked = showConfidenceScores,
                 onCheckedChange = onShowConfidenceScoresChange
             )
 
             HorizontalDivider()
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row {
                     Text(
                         text = "Confidence Threshold",
                         style = MaterialTheme.typography.titleMedium,
@@ -257,36 +206,26 @@ private fun ClassificationSettingsCard(
 
                 Text(
                     text = "Minimum confidence level to classify an item as a note",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.bodyMedium
                 )
 
                 Slider(
                     value = confidenceThreshold,
                     onValueChange = onConfidenceThresholdChange,
                     valueRange = 0.5f..1f,
-                    steps = 9,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics {
-                            contentDescription =
-                                "Confidence threshold slider, currently ${(confidenceThreshold * 100).roundToInt()} percent"
-                        })
+                    steps = 9
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Lower (more inclusive)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Lower (more inclusive)", style = MaterialTheme.typography.bodySmall
                     )
 
                     Text(
-                        text = "Higher (more selective)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Higher (more selective)", style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -295,12 +234,8 @@ private fun ClassificationSettingsCard(
 }
 
 @Composable
-private fun AboutCard(modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
+private fun AboutCard() {
+    Card {
         Column(
             modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -313,21 +248,17 @@ private fun AboutCard(modifier: Modifier = Modifier) {
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
                 )
-                Text(
-                    text = "About WhatSweep", style = MaterialTheme.typography.titleMedium
-                )
+                Text(text = "About WhatSweep", style = MaterialTheme.typography.titleMedium)
             }
 
             Text(
                 text = "WhatSweep is an offline app for identifying and managing handwritten notes among your media files. It uses a custom TensorFlow Lite model to classify images and PDF pages.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = MaterialTheme.typography.bodyMedium
             )
 
             Text(
                 text = "🔒 All processing happens on your device, and no data is sent to external servers.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = MaterialTheme.typography.bodyMedium
             )
 
             HorizontalDivider()
@@ -337,12 +268,8 @@ private fun AboutCard(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Version", style = MaterialTheme.typography.titleSmall
-                )
-                Text(
-                    text = "1.0.0", style = MaterialTheme.typography.labelLarge
-                )
+                Text(text = "Version", style = MaterialTheme.typography.titleSmall)
+                Text(text = BuildConfig.VERSION_NAME, style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -354,40 +281,20 @@ fun SettingsSwitchItem(
     description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics {
-                contentDescription =
-                    "$title: ${if (checked) "enabled" else "disabled"}. $description"
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title, style = MaterialTheme.typography.titleMedium
-            )
-
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(text = description, style = MaterialTheme.typography.bodyMedium)
         }
 
         Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            thumbContent = {
+            checked = checked, onCheckedChange = onCheckedChange, thumbContent = {
                 Icon(
                     imageVector = if (checked) Icons.Rounded.Check else Icons.Rounded.Close,
                     contentDescription = null,
                     modifier = Modifier.size(SwitchDefaults.IconSize)
                 )
-            },
-        )
+            })
     }
 }

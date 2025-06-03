@@ -81,9 +81,7 @@ class ClassifierService(context: Context) {
         }
     }
 
-    /**
-     * Core classification method using ML Kit ImageLabeler.
-     */
+    /** Core classification method using ML Kit ImageLabeler. */
     private suspend fun classifyBitmap(bitmap: Bitmap): Classification {
         val image = InputImage.fromBitmap(bitmap, 0)
         val labeler = getOrCreateLabeler()

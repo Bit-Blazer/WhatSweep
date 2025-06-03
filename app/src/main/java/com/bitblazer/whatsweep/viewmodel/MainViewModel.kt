@@ -5,6 +5,8 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bitblazer.whatsweep.model.ClassificationLabel
+import com.bitblazer.whatsweep.model.FileType
 import com.bitblazer.whatsweep.model.MediaFile
 import com.bitblazer.whatsweep.repository.MediaScanner
 import com.bitblazer.whatsweep.util.PreferencesManager
@@ -23,8 +25,8 @@ import java.io.File
  */
 data class ScanProgress(
     val filesProcessed: Int = 0,
-    val totalFilesFound: Int = -1,  // -1 means total not yet known
-    val currentDirectory: String = ""
+    val totalFilesFound: Int = -1, // -1 means total not yet known
+    val currentDirectory: String = "",
 )
 
 /**
@@ -39,12 +41,10 @@ data class DeleteProgress(
     val filesDeleted: Int = 0,
     val totalFilesToDelete: Int = 0,
     val currentFileName: String = "",
-    val errors: List<String> = emptyList()
+    val errors: List<String> = emptyList(),
 )
 
-/**
- * UI state representing the scanning operation status.
- */
+/** UI state representing the scanning operation status. */
 sealed class ScanState {
     object Idle : ScanState()
     data class Scanning(val progress: ScanProgress) : ScanState()
@@ -52,9 +52,7 @@ sealed class ScanState {
     data class Error(val message: String, val exception: Throwable? = null) : ScanState()
 }
 
-/**
- * UI state representing the deletion operation status.
- */
+/** UI state representing the deletion operation status. */
 sealed class DeleteState {
     object Idle : DeleteState()
     data class Deleting(val progress: DeleteProgress) : DeleteState()
@@ -73,8 +71,8 @@ sealed class DeleteState {
  * - Handling file selection and deletion
  * - Providing reactive state updates for UI
  *
- * Architecture: Follows MVVM pattern with clear separation of concerns.
- * All business logic is contained here, keeping UI components stateless.
+ * Architecture: Follows MVVM pattern with clear separation of concerns. All business logic is
+ * contained here, keeping UI components stateless.
  */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -112,7 +110,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     // Internal tracking for deduplication
-    private val processedFileKeys = mutableSetOf<String>()
+    private val processedFiles = mutableSetOf<String>()
 
     init {
         Log.d(TAG, "MainViewModel initialized")
@@ -138,9 +136,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                mediaScanner.scanWhatsAppFolder().collect { mediaFile ->
-                    processMediaFile(mediaFile)
-                }
+                mediaScanner.scanWhatsAppFolder()
+                    .collect { mediaFile -> processMediaFile(mediaFile) }
 
                 // Sort and finalize results
                 sortMediaLists()
@@ -150,7 +147,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 _scanState.value = ScanState.Completed(notesCount, otherCount)
                 Log.d(TAG, "Scan completed: $notesCount notes, $otherCount others")
-
             } catch (exception: Exception) {
                 Log.e(TAG, "Scan failed", exception)
                 _scanState.value = ScanState.Error(
@@ -161,30 +157,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Clears current scan results and resets state.
-     */
+    /** Clears current scan results and resets state. */
     private fun clearCurrentResults() {
         _notesFiles.value = emptyList()
         _otherFiles.value = emptyList()
         _selectedFiles.value = emptyList()
-        processedFileKeys.clear()
+        processedFiles.clear()
     }
 
-    /**
-     * Processes a newly discovered media file, handling deduplication and categorization.
-     */
+    /** Processes a newly discovered media file, handling deduplication and categorization. */
     private fun processMediaFile(mediaFile: MediaFile) {
         // Skip duplicates based on unique key
-        if (processedFileKeys.contains(mediaFile.key)) {
-            Log.v(TAG, "Skipping duplicate file: ${mediaFile.key}")
+        if (processedFiles.contains(mediaFile.name)) {
+            Log.v(TAG, "Skipping duplicate file: ${mediaFile.name}")
             return
         }
 
-        processedFileKeys.add(mediaFile.key)
+        processedFiles.add(mediaFile.name)
 
         // Update appropriate list based on classification
-        if (mediaFile.isNotes) {
+        if (mediaFile.classification.labelType == ClassificationLabel.NOTES) {
             _notesFiles.value = _notesFiles.value + mediaFile
             Log.v(TAG, "Added notes file: ${mediaFile.name}")
         } else {
@@ -208,8 +200,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Images appear first, then PDFs, sorted alphabetically within each type.
      */
     private fun sortMediaLists() {
-        val sortComparator = compareBy<MediaFile> { !it.isImage }  // Images first
-            .thenBy { it.name.lowercase() }  // Then alphabetically
+        val sortComparator = compareBy<MediaFile> { it.type != FileType.IMAGE } // Images first
+            .thenBy { it.name.lowercase() } // Then alphabetically
 
         _notesFiles.value = _notesFiles.value.sortedWith(sortComparator)
         _otherFiles.value = _otherFiles.value.sortedWith(sortComparator)
@@ -223,7 +215,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * @param mediaFile The file to toggle selection for
      */
     fun toggleSelection(mediaFile: MediaFile) {
-        val currentlySelected = _selectedFiles.value.any { it.key == mediaFile.key }
+        val currentlySelected = _selectedFiles.value.any { it.name == mediaFile.name }
         setSelectionState(mediaFile, !currentlySelected)
     }
 
@@ -239,34 +231,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Update selected files list
         if (selected) {
-            if (_selectedFiles.value.none { it.key == mediaFile.key }) {
+            if (_selectedFiles.value.none { it.name == mediaFile.name }) {
                 _selectedFiles.value = _selectedFiles.value + mediaFile.copy(isSelected = true)
             }
         } else {
-            _selectedFiles.value = _selectedFiles.value.filterNot { it.key == mediaFile.key }
+            _selectedFiles.value = _selectedFiles.value.filterNot { it.name == mediaFile.name }
         }
 
         Log.v(TAG, "File ${mediaFile.name} selection: $selected")
     }
 
-    /**
-     * Updates a file in the appropriate list with a transformation function.
-     */
+    /** Updates a file in the appropriate list with a transformation function. */
     private fun updateFileInList(mediaFile: MediaFile, transform: (MediaFile) -> MediaFile) {
-        if (mediaFile.isNotes) {
+        if (mediaFile.classification.labelType == ClassificationLabel.NOTES) {
             _notesFiles.value = _notesFiles.value.map { file ->
-                if (file.key == mediaFile.key) transform(file) else file
+                if (file.name == mediaFile.name) transform(file) else file
             }
         } else {
             _otherFiles.value = _otherFiles.value.map { file ->
-                if (file.key == mediaFile.key) transform(file) else file
+                if (file.name == mediaFile.name) transform(file) else file
             }
         }
     }
 
     /**
-     * Deletes all currently selected files from storage and updates the UI with progress.
-     * This operation runs on a background thread and updates delete state reactively.
+     * Deletes all currently selected files from storage and updates the UI with progress. This
+     * operation runs on a background thread and updates delete state reactively.
      */
     fun deleteSelectedFiles() {
         if (_deleteState.value is DeleteState.Deleting) {
@@ -301,11 +291,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         // Update progress to show current file being deleted
                         val currentState = _deleteState.value as DeleteState.Deleting
-                        _deleteState.value = DeleteState.Deleting(
-                            currentState.progress.copy(
-                                currentFileName = mediaFile.name
-                            )
-                        )
+                        _deleteState.value =
+                            DeleteState.Deleting(currentState.progress.copy(currentFileName = mediaFile.name))
 
                         if (deleteMediaFile(mediaFile)) {
                             successCount++
@@ -349,7 +336,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Auto-reset to idle after a short delay
                 kotlinx.coroutines.delay(2000)
                 _deleteState.value = DeleteState.Idle
-
             } catch (exception: Exception) {
                 Log.e(TAG, "Delete operation failed", exception)
                 _deleteState.value = DeleteState.Error(
@@ -364,16 +350,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Resets the delete state to idle (used when dismissing dialogs)
-     */
+    /** Resets the delete state to idle (used when dismissing dialogs) */
     fun resetDeleteState() {
         _deleteState.value = DeleteState.Idle
     }
 
-    /**
-     * Deletes a single media file and its associated thumbnail if applicable.
-     */
+    /** Deletes a single media file and its associated thumbnail if applicable. */
     private fun deleteMediaFile(mediaFile: MediaFile): Boolean {
         var success = false
 
@@ -382,7 +364,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             success = mediaFile.file.delete()
 
             // Delete thumbnail for PDFs
-            if (success && mediaFile.isPdf && mediaFile.thumbnailUri != null) {
+            if (success && mediaFile.type == FileType.PDF && mediaFile.thumbnailUri != null) {
                 try {
                     val thumbnailFile = File(mediaFile.thumbnailUri.path!!)
                     if (thumbnailFile.exists()) {
@@ -402,18 +384,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return success
     }
 
-    /**
-     * Removes cached classification data for a deleted file.
-     */
+    /** Removes cached classification data for a deleted file. */
     private fun removeCachedClassification(mediaFile: MediaFile) {
         try {
             val cache = preferencesManager.cache
             val updatedCache = when {
-                mediaFile.isNotes -> cache.copy(
-                    notes = cache.notes.toMutableMap().apply { remove(mediaFile.path) })
+                mediaFile.classification.labelType == ClassificationLabel.NOTES -> cache.copy(
+                    notes = cache.notes.toMutableMap().apply { remove(mediaFile.name) })
 
                 else -> cache.copy(
-                    others = cache.others.toMutableMap().apply { remove(mediaFile.path) })
+                    others = cache.others.toMutableMap().apply { remove(mediaFile.name) })
             }
             preferencesManager.cache = updatedCache
         } catch (e: Exception) {
@@ -421,20 +401,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Removes a file from the appropriate UI list.
-     */
+    /** Removes a file from the appropriate UI list. */
     private fun removeFileFromLists(mediaFile: MediaFile) {
-        if (mediaFile.isNotes) {
-            _notesFiles.value = _notesFiles.value.filterNot { it.key == mediaFile.key }
+        if (mediaFile.classification.labelType == ClassificationLabel.NOTES) {
+            _notesFiles.value = _notesFiles.value.filterNot { it.name == mediaFile.name }
         } else {
-            _otherFiles.value = _otherFiles.value.filterNot { it.key == mediaFile.key }
+            _otherFiles.value = _otherFiles.value.filterNot { it.name == mediaFile.name }
         }
     }
 
-    /**
-     * Clears all selected files without deleting them.
-     */
+    /** Clears all selected files without deleting them. */
     fun clearSelection() {
         // Update selection state in lists
         _notesFiles.value = _notesFiles.value.map { it.copy(isSelected = false) }
@@ -444,17 +420,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Selection cleared")
     }
 
-    /**
-     * Clears the current error message.
-     */
+    /** Clears the current error message. */
     fun clearError() {
         _errorMessage.value = null
         Log.d(TAG, "Error message cleared")
     }
 
     /**
-     * Properly releases resources when ViewModel is cleared.
-     * Ensures MediaScanner and ML Kit resources are properly cleaned up.
+     * Properly releases resources when ViewModel is cleared. Ensures MediaScanner and ML Kit
+     * resources are properly cleaned up.
      */
     override fun onCleared() {
         super.onCleared()
