@@ -18,7 +18,6 @@ import java.io.File
  * @property isPdf True if file is a PDF document
  * @property classification ML classification result
  * @property isSelected UI selection state
- * @property confidenceThreshold Minimum confidence for positive classification
  * @property thumbnailUri Optional thumbnail URI for PDFs
  */
 data class MediaFile(
@@ -31,7 +30,6 @@ data class MediaFile(
     val isPdf: Boolean = false,
     var classification: Classification? = null,
     var isSelected: Boolean = false,
-    val confidenceThreshold: Float = 0.7f,
     val thumbnailUri: Uri? = null  // For PDF thumbnails
 ) {
 
@@ -52,25 +50,13 @@ data class MediaFile(
      * Determines if this file is classified as notes based on ML confidence.
      */
     val isNotes: Boolean
-        get() = classification?.let {
-            it.label == "notes" && it.confidence > confidenceThreshold
-        } ?: false
+        get() = classification?.let { it.label == "notes" } == true
 
     /**
      * Confidence score as percentage string for UI display.
      */
     val confidencePercentage: String
         get() = classification?.let { "${(it.confidence * 100).toInt()}%" } ?: "N/A"
-
-    /**
-     * Classification status for UI display.
-     */
-    val classificationStatus: ClassificationStatus
-        get() = when {
-            classification == null -> ClassificationStatus.Unknown
-            isNotes -> ClassificationStatus.Notes(classification!!.confidence)
-            else -> ClassificationStatus.Other(classification!!.confidence)
-        }
 
     // Use path-based equality for proper deduplication
     override fun equals(other: Any?): Boolean {
@@ -103,19 +89,10 @@ data class MediaFile(
  * @property confidence Confidence score between 0.0 and 1.0
  */
 data class Classification(
-    val label: String,
-    val confidence: Float
+    val label: String, val confidence: Float
 ) {
     init {
         require(confidence in 0f..1f) { "Confidence must be between 0.0 and 1.0" }
     }
 }
 
-/**
- * Sealed class representing different classification states for UI.
- */
-sealed class ClassificationStatus {
-    object Unknown : ClassificationStatus()
-    data class Notes(val confidence: Float) : ClassificationStatus()
-    data class Other(val confidence: Float) : ClassificationStatus()
-}

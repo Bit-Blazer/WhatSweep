@@ -97,10 +97,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _deleteState = MutableStateFlow<DeleteState>(DeleteState.Idle)
     val deleteState: StateFlow<DeleteState> = _deleteState.asStateFlow()
 
-    // Backwards compatibility
-    val isScanning: StateFlow<Boolean> = MutableStateFlow(false)
-    val scanProgress: StateFlow<ScanProgress> = MutableStateFlow(ScanProgress())
-
     // Media files state - using StateFlow for reactive UI updates
     private val _notesFiles = MutableStateFlow<List<MediaFile>>(emptyList())
     val notesFiles: StateFlow<List<MediaFile>> = _notesFiles.asStateFlow()
@@ -436,41 +432,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Clears all selected files without deleting them.
-     */
-    fun clearSelection() {
-        // Update selection state in lists
-        _notesFiles.value = _notesFiles.value.map { it.copy(isSelected = false) }
-        _otherFiles.value = _otherFiles.value.map { it.copy(isSelected = false) }
-        _selectedFiles.value = emptyList()
-
-        Log.d(TAG, "Selection cleared")
-    }
-
-    /**
-     * Retries the last scan operation if it failed.
-     */
-    fun retryScan() {
-        if (_scanState.value is ScanState.Error) {
-            Log.d(TAG, "Retrying scan after error")
-            scanWhatsAppFolder()
-        }
-    }
-
-    /**
      * Clears the current error message.
      */
     fun clearError() {
         _errorMessage.value = null
         Log.d(TAG, "Error message cleared")
-    }
-
-    /**
-     * Sets an error message to be displayed to the user.
-     */
-    fun setErrorMessage(message: String) {
-        _errorMessage.value = message
-        Log.d(TAG, "Error message set: $message")
     }
 
     /**

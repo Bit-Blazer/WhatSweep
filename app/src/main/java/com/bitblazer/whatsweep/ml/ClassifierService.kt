@@ -2,12 +2,8 @@ package com.bitblazer.whatsweep.ml
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
-import android.net.Uri
 import android.util.Log
 import androidx.core.graphics.scale
-import androidx.exifinterface.media.ExifInterface
 import com.bitblazer.whatsweep.model.Classification
 import com.bitblazer.whatsweep.util.PreferencesManager
 import com.google.mlkit.common.model.LocalModel
@@ -18,7 +14,6 @@ import com.google.mlkit.vision.label.custom.CustomImageLabelerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -34,13 +29,12 @@ import kotlin.coroutines.resumeWithException
  * - Configurable confidence thresholds
  * - Proper model lifecycle management
  */
-class ClassifierService(private val context: Context) {
+class ClassifierService(context: Context) {
 
     companion object {
         const val MODEL_NAME = "notes_classifier_quantized.tflite"
         const val TAG = "ClassifierService"
         private const val TARGET_IMAGE_SIZE = 224 // Standard input size for most models
-        private const val MAX_BITMAP_SIZE = 2048 // Prevent OOM on large images
     }
 
     private val preferencesManager = PreferencesManager(context)
@@ -69,27 +63,6 @@ class ClassifierService(private val context: Context) {
             }
         }
     }
-
-    /**
-     * Classifies an image from a URI with proper EXIF handling and memory management.
-     *
-     * @param imageUri URI of the image to classify
-     * @return Classification result with label and confidence
-     * @throws IOException if image cannot be loaded
-     * @throws IllegalArgumentException if URI is invalid
-     */
-    suspend fun classifyImageFromUri(imageUri: Uri): Classification =
-        withContext(Dispatchers.Default) {
-            try {
-                val bitmap = loadAndPreprocessImage(imageUri)
-                    ?: throw IOException("Failed to load image from URI: $imageUri")
-
-                return@withContext classifyBitmap(bitmap)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error classifying image from URI: $imageUri", e)
-                throw e
-            }
-        }
 
     /**
      * Classifies a bitmap image with preprocessing.
@@ -142,115 +115,6 @@ class ClassifierService(private val context: Context) {
                 Log.d(TAG, "Classification cancelled")
             }
         }
-    }
-
-    /**
-     * Loads image from URI with proper EXIF orientation handling and memory management.
-     */
-    private fun loadAndPreprocessImage(imageUri: Uri): Bitmap? {
-        return try {
-            context.contentResolver.openInputStream(imageUri)?.use { inputStream ->
-                // First, get image dimensions without loading full bitmap
-                val options = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-                BitmapFactory.decodeStream(inputStream, null, options)
-
-                // Calculate appropriate sample size to prevent OOM
-                val sampleSize = calculateInSampleSize(options, MAX_BITMAP_SIZE, MAX_BITMAP_SIZE)
-
-                // Reset stream and load the actual bitmap
-                context.contentResolver.openInputStream(imageUri)?.use { secondStream ->
-                    val loadOptions = BitmapFactory.Options().apply {
-                        inSampleSize = sampleSize
-                        inPreferredConfig = Bitmap.Config.RGB_565 // Use less memory
-                    }
-
-                    val bitmap = BitmapFactory.decodeStream(secondStream, null, loadOptions)
-                    bitmap?.let {
-                        val correctedBitmap = correctImageOrientation(it, imageUri)
-                        preprocessBitmap(correctedBitmap)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load image from URI: $imageUri", e)
-            null
-        }
-    }
-
-    /**
-     * Corrects image orientation based on EXIF data.
-     */
-    private fun correctImageOrientation(bitmap: Bitmap, imageUri: Uri): Bitmap {
-        return try {
-            context.contentResolver.openInputStream(imageUri)?.use { inputStream ->
-                val exif = ExifInterface(inputStream)
-                val orientation = exif.getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED
-                )
-
-                when (orientation) {
-                    ExifInterface.ORIENTATION_ROTATE_90 -> rotateBitmap(bitmap, 90f)
-                    ExifInterface.ORIENTATION_ROTATE_180 -> rotateBitmap(bitmap, 180f)
-                    ExifInterface.ORIENTATION_ROTATE_270 -> rotateBitmap(bitmap, 270f)
-                    ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> flipBitmap(
-                        bitmap, horizontal = true
-                    )
-
-                    ExifInterface.ORIENTATION_FLIP_VERTICAL -> flipBitmap(
-                        bitmap, horizontal = false
-                    )
-
-                    else -> bitmap
-                }
-            } ?: bitmap
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not read EXIF data, using original orientation", e)
-            bitmap
-        }
-    }
-
-    /**
-     * Rotates bitmap by specified degrees.
-     */
-    private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
-        val matrix = Matrix().apply { postRotate(degrees) }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-    }
-
-    /**
-     * Flips bitmap horizontally or vertically.
-     */
-    private fun flipBitmap(bitmap: Bitmap, horizontal: Boolean): Bitmap {
-        val matrix = Matrix().apply {
-            if (horizontal) {
-                preScale(-1f, 1f)
-            } else {
-                preScale(1f, -1f)
-            }
-        }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-    }
-
-    /**
-     * Calculates appropriate sample size to reduce memory usage.
-     */
-    private fun calculateInSampleSize(
-        options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int
-    ): Int {
-        val (height: Int, width: Int) = options.run { outHeight to outWidth }
-        var inSampleSize = 1
-
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight: Int = height / 2
-            val halfWidth: Int = width / 2
-
-            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                inSampleSize *= 2
-            }
-        }
-        return inSampleSize
     }
 
     /**

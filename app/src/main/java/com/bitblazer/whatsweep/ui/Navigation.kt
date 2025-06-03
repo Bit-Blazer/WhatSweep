@@ -1,8 +1,6 @@
 package com.bitblazer.whatsweep.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -16,9 +14,9 @@ import com.bitblazer.whatsweep.viewmodel.MainViewModel
 /**
  * Sealed class defining navigation destinations.
  */
-sealed class Screen(val route: String, val title: String) {
-    object Results : Screen("results", "Results")
-    object Settings : Screen("settings", "Settings")
+sealed class Screen(val route: String) {
+    object Results : Screen("results")
+    object Settings : Screen("settings")
 }
 
 /**
@@ -32,15 +30,7 @@ fun AppNavigation(
 ) {
     // Observe current back stack entry for navigation state
     val currentBackStackEntry = navController.currentBackStackEntryAsState()
-    val currentDestination = currentBackStackEntry.value?.destination
-
-    // Handle cleanup when leaving Results screen
-    LaunchedEffect(currentDestination?.route) {
-        if (currentDestination?.route != Screen.Results.route) {
-            // Optionally pause scanning when navigating away from results
-            // This prevents unnecessary processing while user is in settings
-        }
-    }
+    currentBackStackEntry.value?.destination
 
     NavHost(
         navController = navController,
@@ -50,12 +40,6 @@ fun AppNavigation(
         composable(
             route = Screen.Results.route,
         ) {
-            // Handle back button behavior on main screen
-            BackHandler(enabled = mainViewModel.selectedFiles.value.isNotEmpty()) {
-                // Clear selection when back button is pressed
-                mainViewModel.clearSelection()
-            }
-
             ResultsScreen(
                 viewModel = mainViewModel,
                 onNavigateToSettings = {
