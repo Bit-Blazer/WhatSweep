@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -33,6 +34,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.Notes
@@ -72,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -116,6 +119,9 @@ fun ResultsScreen(
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
+
+    // Create scroll behavior for TopAppBar
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
 
     // Grid/List view toggle
     var isGridView by remember { mutableStateOf(true) }
@@ -235,96 +241,106 @@ fun ResultsScreen(
             })
     }
 
-    Scaffold(topBar = {
-        TopAppBar(
-            title = {
-                if (selectedFiles.isEmpty()) {
-                    Text("WhatSweep")
-                } else {
-                    Text("${selectedFiles.size} selected")
-                }
-            }, colors = if (selectedFiles.isNotEmpty()) {
-                // Apply primary color tint to app bar when items are selected
-                TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            } else {
-                TopAppBarDefaults.topAppBarColors()
-            }, actions = {
-                if (selectedFiles.isNotEmpty()) {
-                    // Show delete button when items are selected
-
-                    IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Outlined.Delete, contentDescription = "Delete selected files")
+    Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection), topBar = {
+            TopAppBar(
+                scrollBehavior = scrollBehavior, title = {
+                    if (selectedFiles.isEmpty()) {
+                        Text("WhatSweep")
+                    } else {
+                        Text("${selectedFiles.size} selected")
                     }
-                    // Select all toggle
-                    val currentPage = pagerState.currentPage
-                    val currentPageFiles =
-                        if (currentPage == 0) notesFiles else otherFiles                    // Check if all files in the current tab are selected
-                    val allSelected =
-                        currentPageFiles.isNotEmpty() && currentPageFiles.all { it.isSelected }
-                    // Select all checkbox
-                    Checkbox(
-                        checked = allSelected, onCheckedChange = { checked ->
-                            // Select or deselect all files in the current tab
-                            if (currentPage == 0) {
-                                notesFiles.forEach { viewModel.setSelectionState(it, checked) }
-                            } else {
-                                otherFiles.forEach { viewModel.setSelectionState(it, checked) }
-                            }
-                        }, colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.onPrimary,
-                            uncheckedColor = MaterialTheme.colorScheme.onPrimary,
-                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
-                        ), modifier = Modifier.padding(8.dp)
-                    )
-                } else {
-                    // Default view: show scan button, view toggle, and settings
-                    // Main scan button
-                    Button(
-                        onClick = {
-                            if (hasAllPermissions) {
-                                viewModel.scanWhatsAppFolder()
-                            } else {
-                                // If basic permissions granted but not MANAGE_EXTERNAL_STORAGE on Android 11+
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasBasicPermissions && !isExternalStorageManager) {
-                                    showManageStorageDialog = true
-                                } else {
-                                    permissionDenied = true
-                                }
-                            }
-                        },
-                        enabled = scanState !is ScanState.Scanning && hasAllPermissions,
-                        modifier = Modifier.padding(horizontal = 8.dp)
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.Chat,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Scan", style = MaterialTheme.typography.labelLarge)
-                    }
-
-                    // View toggle button
-                    if (notesFiles.isNotEmpty() || otherFiles.isNotEmpty()) {
-                        // Only show view toggle if we have content to display
-                        IconButton(onClick = { isGridView = !isGridView }) {
+                }, navigationIcon = {
+                    if (selectedFiles.isNotEmpty()) {
+                        IconButton(onClick = { /* unselect */ }) {
                             Icon(
-                                if (isGridView) Icons.AutoMirrored.Outlined.FormatListBulleted else Icons.Outlined.GridView,
-                                contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View"
+                                Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back"
                             )
                         }
                     }
-                    // Settings button
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                }, colors = if (selectedFiles.isNotEmpty()) {
+                    // Apply primary color tint to app bar when items are selected
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    TopAppBarDefaults.topAppBarColors()
+                }, actions = {
+                    if (selectedFiles.isNotEmpty()) {
+                        // Show delete button when items are selected
+                        IconButton(onClick = { showDeleteDialog = true }) {
+                            Icon(
+                                Icons.Outlined.Delete, contentDescription = "Delete selected files"
+                            )
+                        }
+                        // Select all toggle
+                        val currentPage = pagerState.currentPage
+                        val currentPageFiles =
+                            if (currentPage == 0) notesFiles else otherFiles                    // Check if all files in the current tab are selected
+                        val allSelected =
+                            currentPageFiles.isNotEmpty() && currentPageFiles.all { it.isSelected }
+                        // Select all checkbox
+                        Checkbox(
+                            checked = allSelected, onCheckedChange = { checked ->
+                                // Select or deselect all files in the current tab
+                                if (currentPage == 0) {
+                                    notesFiles.forEach { viewModel.setSelectionState(it, checked) }
+                                } else {
+                                    otherFiles.forEach { viewModel.setSelectionState(it, checked) }
+                                }
+                            }, colors = CheckboxDefaults.colors(
+                                checkedColor = MaterialTheme.colorScheme.onPrimary,
+                                uncheckedColor = MaterialTheme.colorScheme.onPrimary,
+                                checkmarkColor = MaterialTheme.colorScheme.onPrimary
+                            ), modifier = Modifier.padding(8.dp)
+                        )
+                    } else {
+                        // Default view: show scan button, view toggle, and settings
+                        // Main scan button
+                        Button(
+                            onClick = {
+                                if (hasAllPermissions) {
+                                    viewModel.scanWhatsAppFolder()
+                                } else {
+                                    // If basic permissions granted but not MANAGE_EXTERNAL_STORAGE on Android 11+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasBasicPermissions && !isExternalStorageManager) {
+                                        showManageStorageDialog = true
+                                    } else {
+                                        permissionDenied = true
+                                    }
+                                }
+                            },
+                            enabled = scanState !is ScanState.Scanning && hasAllPermissions,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.Chat,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Scan", style = MaterialTheme.typography.labelLarge)
+                        }
+
+                        // View toggle button
+                        if (notesFiles.isNotEmpty() || otherFiles.isNotEmpty()) {
+                            // Only show view toggle if we have content to display
+                            IconButton(onClick = { isGridView = !isGridView }) {
+                                Icon(
+                                    if (isGridView) Icons.AutoMirrored.Outlined.FormatListBulleted else Icons.Outlined.GridView,
+                                    contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View"
+                                )
+                            }
+                        }
+                        // Settings button
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                        }
                     }
-                }
-            })
-    }) { paddingValues ->
+                })
+        }) { paddingValues ->
         Column(
             modifier = modifier
                 .fillMaxSize()
@@ -670,60 +686,102 @@ fun MediaGrid(
     val imageFiles = mediaFiles.filter { it.isImage }
     val pdfFiles = mediaFiles.filter { it.isPdf }
 
-    Column(
-        modifier = modifier.fillMaxSize()
-    ) {
-        if (mediaFiles.isNotEmpty()) {
-            // Images Section
-            if (imageFiles.isNotEmpty()) {
-                SectionTitle(title = "Images (${imageFiles.size})")
+    if (mediaFiles.isNotEmpty()) {
+        if (isGridView) {
+            // Use LazyVerticalGrid for grid layout with sections
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 120.dp),
+                contentPadding = PaddingValues(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = modifier.fillMaxWidth()
+            ) {
+                // Images Section
+                if (imageFiles.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SectionTitle(title = "Images (${imageFiles.size})")
+                    }
 
-                if (isGridView) {
-                    MediaGridView(
-                        mediaFiles = imageFiles,
-                        onItemClick = onItemClick,
-                        showConfidenceScores = showConfidenceScores
-                    )
-                } else {
-                    MediaListView(
-                        mediaFiles = imageFiles,
-                        onItemClick = onItemClick,
-                        showConfidenceScores = showConfidenceScores
-                    )
+                    items(items = imageFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
+                        MediaGridItem(
+                            mediaFile = mediaFile,
+                            onClick = { onItemClick(mediaFile) },
+                            showConfidenceScore = showConfidenceScores
+                        )
+                    }
                 }
-            }
 
-            // PDF Section
-            if (pdfFiles.isNotEmpty()) {
-                SectionTitle(title = "PDF Pages (${pdfFiles.size})")
+                // PDF Section
+                if (pdfFiles.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SectionTitle(title = "PDF Documents (${pdfFiles.size})")
+                    }
 
-                if (isGridView) {
-                    MediaGridView(
-                        mediaFiles = pdfFiles,
-                        onItemClick = onItemClick,
-                        showConfidenceScores = showConfidenceScores
-                    )
-                } else {
-                    MediaListView(
-                        mediaFiles = pdfFiles,
-                        onItemClick = onItemClick,
-                        showConfidenceScores = showConfidenceScores
-                    )
+                    items(items = pdfFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
+                        MediaGridItem(
+                            mediaFile = mediaFile,
+                            onClick = { onItemClick(mediaFile) },
+                            showConfidenceScore = showConfidenceScores
+                        )
+                    }
                 }
             }
         } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(300.dp),
-                contentAlignment = Alignment.Center
+            // Use LazyColumn for list layout with sections
+            LazyColumn(
+                contentPadding = PaddingValues(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = modifier.fillMaxSize()
             ) {
-                Text(
-                    "No files found in this category",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Images Section
+                if (imageFiles.isNotEmpty()) {
+                    item {
+                        SectionTitle(title = "Images (${imageFiles.size})")
+                    }
+
+                    items(items = imageFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
+                        MediaListItem(
+                            mediaFile = mediaFile,
+                            onClick = { onItemClick(mediaFile) },
+                            showConfidenceScore = showConfidenceScores
+                        )
+                    }
+                }
+
+                // Add spacing between sections
+                if (imageFiles.isNotEmpty() && pdfFiles.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+
+                // PDF Section
+                if (pdfFiles.isNotEmpty()) {
+                    item {
+                        SectionTitle(title = "PDF Documents (${pdfFiles.size})")
+                    }
+
+                    items(items = pdfFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
+                        MediaListItem(
+                            mediaFile = mediaFile,
+                            onClick = { onItemClick(mediaFile) },
+                            showConfidenceScore = showConfidenceScores
+                        )
+                    }
+                }
             }
+        }
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp), contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "No files found in this category",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -738,54 +796,6 @@ fun SectionTitle(title: String) {
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             .padding(horizontal = 16.dp, vertical = 8.dp)
     )
-}
-
-@Composable
-fun MediaGridView(
-    mediaFiles: List<MediaFile>,
-    onItemClick: (MediaFile) -> Unit,
-    showConfidenceScores: Boolean = false
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 120.dp),
-        contentPadding = PaddingValues(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        items(
-            // Group media files by their file name to prevent duplicates
-            items = mediaFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-            MediaGridItem(
-                mediaFile = mediaFile,
-                onClick = { onItemClick(mediaFile) },
-                showConfidenceScore = showConfidenceScores
-            )
-        }
-    }
-}
-
-@Composable
-fun MediaListView(
-    mediaFiles: List<MediaFile>,
-    onItemClick: (MediaFile) -> Unit,
-    showConfidenceScores: Boolean = false
-) {
-    LazyColumn(
-        contentPadding = PaddingValues(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        items(
-            // Group media files by their file name to prevent duplicates
-            items = mediaFiles.distinctBy { it.key }, key = { it.key }) { mediaFile ->
-            MediaListItem(
-                mediaFile = mediaFile,
-                onClick = { onItemClick(mediaFile) },
-                showConfidenceScore = showConfidenceScores
-            )
-        }
-    }
 }
 
 @Composable
