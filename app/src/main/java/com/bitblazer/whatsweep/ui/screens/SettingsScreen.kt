@@ -102,7 +102,7 @@ fun SettingsScreen(
                     onClearCache = {
                         coroutineScope.launch {
                             try {
-                                prefsManager.clearClassificationCache()
+                                prefsManager.clearCache()
                                 snackbarHostState.showSnackbar("Classification cache cleared successfully")
                             } catch (e: Exception) {
                                 snackbarHostState.showSnackbar("Failed to clear cache: ${e.message}")
@@ -264,8 +264,8 @@ private fun ClassificationSettingsCard(
                 Slider(
                     value = confidenceThreshold,
                     onValueChange = onConfidenceThresholdChange,
-                    valueRange = 0.5f..0.95f,
-                    steps = 8,
+                    valueRange = 0.5f..1f,
+                    steps = 9,
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics {

@@ -89,8 +89,8 @@ class MediaScanner(private val context: Context) {
             processedFilesInSession.clear()
 
             // Load cached classifications to avoid re-processing
-            val cachedNotes = preferencesManager.getClassifiedNotesFiles()
-            val cachedOthers = preferencesManager.getClassifiedOtherFiles()
+            val cachedNotes = preferencesManager.cache.notes
+            val cachedOthers = preferencesManager.cache.others
 
             // Discover all available WhatsApp media directories
             val whatsAppMediaDirs = getWhatsAppMediaDirectories()
@@ -231,19 +231,15 @@ class MediaScanner(private val context: Context) {
 
         fun saveToCache(preferencesManager: PreferencesManager) {
             try {
-                if (notes.isNotEmpty()) {
-                    val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableMap()
-                    cachedNotes.putAll(notes)
-                    preferencesManager.saveClassifiedNotesFiles(cachedNotes)
-                    notes.clear()
-                }
+                val cache = preferencesManager.cache
 
-                if (others.isNotEmpty()) {
-                    val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableMap()
-                    cachedOthers.putAll(others)
-                    preferencesManager.saveClassifiedOtherFiles(cachedOthers)
-                    others.clear()
-                }
+                val updatedCache = cache.copy(
+                    notes = cache.notes.toMutableMap().apply { putAll(notes) },
+                    others = cache.others.toMutableMap().apply { putAll(others) })
+
+                preferencesManager.cache = updatedCache
+                notes.clear()
+                others.clear()
             } catch (e: Exception) {
                 Log.w("MediaScanner", "Failed to save progress at $processedCount files", e)
             }

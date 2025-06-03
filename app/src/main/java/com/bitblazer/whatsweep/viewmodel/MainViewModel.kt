@@ -407,15 +407,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun removeCachedClassification(mediaFile: MediaFile) {
         try {
-            if (mediaFile.isNotes) {
-                val cachedNotes = preferencesManager.getClassifiedNotesFiles().toMutableMap()
-                cachedNotes.remove(mediaFile.path)
-                preferencesManager.saveClassifiedNotesFiles(cachedNotes)
-            } else {
-                val cachedOthers = preferencesManager.getClassifiedOtherFiles().toMutableMap()
-                cachedOthers.remove(mediaFile.path)
-                preferencesManager.saveClassifiedOtherFiles(cachedOthers)
+            val cache = preferencesManager.cache
+            val updatedCache = when {
+                mediaFile.isNotes -> cache.copy(
+                    notes = cache.notes.toMutableMap().apply { remove(mediaFile.path) })
+
+                else -> cache.copy(
+                    others = cache.others.toMutableMap().apply { remove(mediaFile.path) })
             }
+            preferencesManager.cache = updatedCache
         } catch (e: Exception) {
             Log.w(TAG, "Could not update classification cache", e)
         }
