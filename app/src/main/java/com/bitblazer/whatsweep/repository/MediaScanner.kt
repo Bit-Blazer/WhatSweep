@@ -45,6 +45,9 @@ class MediaScanner(private val context: Context) {
         private const val MAX_PDF_SAMPLE_PAGES = 5 // Maximum pages to sample for classification
         private const val THUMBNAIL_SIZE = 512 // PDF thumbnail dimensions
 
+        // Scan statistics
+        var totalFiles = 0
+
         // Supported image formats for classification
         private val SUPPORTED_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "bmp")
     }
@@ -55,6 +58,19 @@ class MediaScanner(private val context: Context) {
 
     // Session cache to prevent duplicate processing within single scan
     private val processedFilesInSession = mutableSetOf<String>()
+
+    private fun countMediaFiles(directory: File, isImagesDir: Boolean): Int {
+        var count = 0
+        directory.walkTopDown().forEach { file ->
+            if (!file.isDirectory && ((isImagesDir && isImageFile(file)) || (!isImagesDir && isPdfFile(
+                    file
+                )))
+            ) {
+                count++
+            }
+        }
+        return count
+    }
 
     /**
      * Main entry point for scanning WhatsApp media folders.
@@ -68,6 +84,7 @@ class MediaScanner(private val context: Context) {
         Log.d(TAG, "Starting WhatsApp folder scan")
 
         try {
+            totalFiles = 0
             // Clear session cache for fresh scan
             processedFilesInSession.clear()
 
@@ -85,6 +102,22 @@ class MediaScanner(private val context: Context) {
 
             var foundFiles = false
             val newClassifications = NewClassificationCache()
+
+            // Pre-scan to count total files
+            whatsAppMediaDirs.forEach { mediaDir ->
+                File(mediaDir, WHATSAPP_IMAGES_DIR).let { imageDir ->
+                    if (imageDir.exists() && imageDir.isDirectory) {
+                        totalFiles += countMediaFiles(imageDir, true)
+                    }
+                }
+                if (preferencesManager.includePdfScanning) {
+                    File(mediaDir, WHATSAPP_DOCUMENTS_DIR).let { docDir ->
+                        if (docDir.exists() && docDir.isDirectory) {
+                            totalFiles += countMediaFiles(docDir, false)
+                        }
+                    }
+                }
+            }
 
             // Process each discovered directory
             for (mediaDir in whatsAppMediaDirs) {

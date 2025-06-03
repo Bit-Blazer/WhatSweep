@@ -196,7 +196,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentState = _scanState.value
         if (currentState is ScanState.Scanning) {
             val updatedProgress = currentState.progress.copy(
-                filesProcessed = currentState.progress.filesProcessed + 1
+                filesProcessed = currentState.progress.filesProcessed + 1,
+                totalFilesFound = MediaScanner.totalFiles
             )
             _scanState.value = ScanState.Scanning(updatedProgress)
         }

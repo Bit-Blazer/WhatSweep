@@ -452,7 +452,13 @@ private fun ScanningContent(
             )
             Spacer(modifier = Modifier.height(8.dp))            // Show processed file count
             Text(
-                text = "Processed: ${scanState.progress.filesProcessed} files",
+                text = buildString {
+                    append("Processed: ${scanState.progress.filesProcessed}")
+                    if (scanState.progress.totalFilesFound > 0) {
+                        append("/${scanState.progress.totalFilesFound}")
+                    }
+                    append(" files")
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -475,9 +481,18 @@ private fun ScanningContent(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth(0.7f)
-            )
+            if (scanState.progress.totalFilesFound > 0) {
+                // Show determinate progress when we know the total
+                LinearProgressIndicator(
+                    progress = { scanState.progress.filesProcessed.toFloat() / scanState.progress.totalFilesFound.toFloat() },
+                    modifier = Modifier.fillMaxWidth(0.7f)
+                )
+            } else {
+                // Show indeterminate progress when total is unknown
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(0.7f)
+                )
+            }
         }
     }
 }
