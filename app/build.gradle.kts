@@ -6,15 +6,17 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// ---- Dynamic Versioning Properties ----
-val versionProps = Properties()
-val versionFile = rootProject.file("version.properties")
-if (versionFile.exists()) {
-    versionFile.inputStream().use { versionProps.load(it) }
+// ---- Dynamic Versioning ----
+fun String.runCommand(): String? = try {
+    ProcessBuilder(*split(" ").toTypedArray())
+        .redirectErrorStream(true)
+        .start().inputStream.bufferedReader().readText().trim()
+} catch (_: Exception) {
+    null
 }
 
-val verCode = versionProps["VERSION_CODE"]?.toString()?.toIntOrNull() ?: 1
-val verName = versionProps["VERSION_NAME"]?.toString() ?: "1.0.0"
+val verCode = "git rev-list --count HEAD".runCommand()?.toIntOrNull() ?: 1
+val verName = "git describe --tags --abbrev=0".runCommand() ?: "1.0.0"
 
 // ---- Signing Properties ----
 val keystoreProperties = Properties()
@@ -34,6 +36,7 @@ android {
         this.versionCode = verCode
         this.versionName = verName
     }
+    base.archivesName.set("WhatSweep-${verName}-${verCode}")
 
     signingConfigs {
         if (keystoreProperties.isNotEmpty()) {
@@ -81,11 +84,6 @@ android {
         mlModelBinding = true
         buildConfig = true
     }
-}
-
-// Ensure version file is generated before the app is built
-tasks.named("preBuild").configure {
-    dependsOn(":generateVersionProperties")
 }
 
 dependencies {
