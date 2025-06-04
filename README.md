@@ -142,7 +142,6 @@ The application requires the following permissions for optimal functionality:
 
 - **Storage Access**: For reading WhatsApp media files
   - `READ_EXTERNAL_STORAGE` (Android < 13)
-  - `READ_MEDIA_IMAGES` (Android 13+)
   - `MANAGE_EXTERNAL_STORAGE` (Android 10+ for comprehensive access)
 
 ### Permission Handling

@@ -96,7 +96,9 @@ import com.bitblazer.whatsweep.viewmodel.DeleteState
 import com.bitblazer.whatsweep.viewmodel.MainViewModel
 import com.bitblazer.whatsweep.viewmodel.ScanState
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.shouldShowRationale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -105,7 +107,6 @@ import kotlinx.coroutines.launch
 fun ResultsScreen(
     viewModel: MainViewModel,
     onNavigateToSettings: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
 
@@ -126,7 +127,6 @@ fun ResultsScreen(
     // Grid/List view toggle
     var isGridView by remember { mutableStateOf(true) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    var permissionDenied by remember { mutableStateOf(false) }
     var showManageStorageDialog by remember { mutableStateOf(false) }
 
     // Auto-close delete dialog when deletion is completed
@@ -137,46 +137,49 @@ fun ResultsScreen(
         }
     }
 
-    // Request storage permissions based on Android version
-    val permissionsList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        // For Android 13+ (API 33+), use granular media permissions
-        listOf(Manifest.permission.READ_MEDIA_IMAGES)
-    } else {
-        // For Android 12L and below, use READ_EXTERNAL_STORAGE
-        listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-    }
+    // Handle READ_EXTERNAL_STORAGE permission
+    val readStoragePermissionState =
+        rememberPermissionState(Manifest.permission.READ_EXTERNAL_STORAGE)
 
-    val readMediaPermissions = rememberMultiplePermissionsState(permissionsList)
-
-    // Check if we have MANAGE_EXTERNAL_STORAGE permission (for Android 11+)
-    var isExternalStorageManager by remember {
+    // Handle MANAGE_EXTERNAL_STORAGE for Android 11+ (API 30+)
+    var hasManageExternalStoragePermission by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 Environment.isExternalStorageManager()
-            } else {
-                true
-            }
+            } else true // Not required for Android 10 and below
         )
     }
 
-    // Launch the permission request when the screen is first composed
-    LaunchedEffect(Unit) {
-        readMediaPermissions.launchMultiplePermissionRequest()
+    // Calculate overall permission status
+    var hasBasicPermissions = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        // For Android 10 and below, we need READ_EXTERNAL_STORAGE
+        readStoragePermissionState.status.isGranted
+    } else true // Not required for Android 11 and above
 
-        // For Android 11+, check if we need the enhanced storage permission
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+    val hasAllPermissions = hasBasicPermissions && hasManageExternalStoragePermission
+    val permissionDenied =
+        !hasBasicPermissions && readStoragePermissionState.status.shouldShowRationale
+
+    // Request permissions on first launch
+    LaunchedEffect(Unit) {
+        if (!hasBasicPermissions) {
+            readStoragePermissionState.launchPermissionRequest()
+        }
+
+        // For Android 11+, check if we need MANAGE_EXTERNAL_STORAGE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !hasManageExternalStoragePermission) {
             showManageStorageDialog = true
         }
     }
 
-    // Add lifecycle observer to update permissions when app resumes
+    // Monitor permission changes when app resumes
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                // Update storage manager permission status when app resumes
+                // Update MANAGE_EXTERNAL_STORAGE permission status
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    isExternalStorageManager = Environment.isExternalStorageManager()
+                    hasManageExternalStoragePermission = Environment.isExternalStorageManager()
                 }
             }
         }
@@ -185,16 +188,7 @@ fun ResultsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Check permissions using both readMediaPermissions and isExternalStorageManager
-    val hasBasicPermissions = readMediaPermissions.allPermissionsGranted
-    val hasAllPermissions =
-        hasBasicPermissions && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || isExternalStorageManager)
-    val tabs = listOf(
-        "Notes (${notesFiles.size})" to Icons.AutoMirrored.Outlined.Notes,
-        "Others (${otherFiles.size})" to Icons.Outlined.AllInclusive
-    )
-
-    // Dialog to guide users to grant MANAGE_EXTERNAL_STORAGE permission
+    // Show MANAGE_EXTERNAL_STORAGE permission dialog
     if (showManageStorageDialog) {
         AlertDialog(onDismissRequest = { showManageStorageDialog = false }, title = {
             Text(
@@ -224,6 +218,11 @@ fun ResultsScreen(
         })
     }
 
+    val tabs = listOf(
+        "Notes (${notesFiles.size})" to Icons.AutoMirrored.Outlined.Notes,
+        "Others (${otherFiles.size})" to Icons.Outlined.AllInclusive
+    )
+
     if (showDeleteDialog) {
         DeleteConfirmationDialog(
             count = selectedFiles.size,
@@ -239,170 +238,170 @@ fun ResultsScreen(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection), topBar = {
             TopAppBar(
                 scrollBehavior = scrollBehavior, title = {
-                    if (selectedFiles.isEmpty()) {
-                        Text("WhatSweep")
-                    } else {
-                        Text("${selectedFiles.size} selected")
+                if (selectedFiles.isEmpty()) {
+                    Text("WhatSweep")
+                } else {
+                    Text("${selectedFiles.size} selected")
+                }
+            }, navigationIcon = {
+                if (selectedFiles.isNotEmpty()) {
+                    IconButton(onClick = viewModel::clearSelection) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "Clear selection"
+                        )
                     }
-                }, navigationIcon = {
-                    if (selectedFiles.isNotEmpty()) {
-                        IconButton(onClick = viewModel::clearSelection) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = "Clear selection"
-                            )
-                        }
+                }
+            }, colors = if (selectedFiles.isNotEmpty()) {
+                // Apply primary color tint to app bar when items are selected
+                TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                TopAppBarDefaults.topAppBarColors()
+            }, actions = {
+                if (selectedFiles.isNotEmpty()) {
+                    // Show delete button when items are selected
+                    IconButton(onClick = { showDeleteDialog = true }) {
+                        Icon(
+                            Icons.Outlined.Delete, contentDescription = "Delete selected files"
+                        )
                     }
-                }, colors = if (selectedFiles.isNotEmpty()) {
-                    // Apply primary color tint to app bar when items are selected
-                    TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    // Select all toggle
+                    val currentPage = pagerState.currentPage
+                    val currentPageFiles =
+                        if (currentPage == 0) notesFiles else otherFiles                    // Check if all files in the current tab are selected
+                    val allSelected =
+                        currentPageFiles.isNotEmpty() && currentPageFiles.all { it.isSelected }
+                    // Select all checkbox
+                    Checkbox(
+                        checked = allSelected, onCheckedChange = { checked ->
+                            // Select or deselect all files in the current tab
+                            if (currentPage == 0) {
+                                notesFiles.forEach { viewModel.setSelectionState(it, checked) }
+                            } else {
+                                otherFiles.forEach { viewModel.setSelectionState(it, checked) }
+                            }
+                        }, colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.onPrimary,
+                            uncheckedColor = MaterialTheme.colorScheme.onPrimary,
+                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
+                        ), modifier = Modifier.padding(8.dp)
                     )
                 } else {
-                    TopAppBarDefaults.topAppBarColors()
-                }, actions = {
-                    if (selectedFiles.isNotEmpty()) {
-                        // Show delete button when items are selected
-                        IconButton(onClick = { showDeleteDialog = true }) {
-                            Icon(
-                                Icons.Outlined.Delete, contentDescription = "Delete selected files"
-                            )
-                        }
-                        // Select all toggle
-                        val currentPage = pagerState.currentPage
-                        val currentPageFiles =
-                            if (currentPage == 0) notesFiles else otherFiles                    // Check if all files in the current tab are selected
-                        val allSelected =
-                            currentPageFiles.isNotEmpty() && currentPageFiles.all { it.isSelected }
-                        // Select all checkbox
-                        Checkbox(
-                            checked = allSelected, onCheckedChange = { checked ->
-                                // Select or deselect all files in the current tab
-                                if (currentPage == 0) {
-                                    notesFiles.forEach { viewModel.setSelectionState(it, checked) }
-                                } else {
-                                    otherFiles.forEach { viewModel.setSelectionState(it, checked) }
-                                }
-                            }, colors = CheckboxDefaults.colors(
-                                checkedColor = MaterialTheme.colorScheme.onPrimary,
-                                uncheckedColor = MaterialTheme.colorScheme.onPrimary,
-                                checkmarkColor = MaterialTheme.colorScheme.onPrimary
-                            ), modifier = Modifier.padding(8.dp)
+                    // Default view: show scan button, view toggle, and settings
+                    // Main scan button
+                    Button(
+                        onClick = { viewModel.scanWhatsAppFolder() },
+                        enabled = scanState !is ScanState.Scanning && hasAllPermissions,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.Chat,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
-                    } else {
-                        // Default view: show scan button, view toggle, and settings
-                        // Main scan button
-                        Button(
-                            onClick = {
-                                if (hasAllPermissions) {
-                                    viewModel.scanWhatsAppFolder()
-                                } else {
-                                    // If basic permissions granted but not MANAGE_EXTERNAL_STORAGE on Android 11+
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasBasicPermissions && !isExternalStorageManager) {
-                                        showManageStorageDialog = true
-                                    } else {
-                                        permissionDenied = true
-                                    }
-                                }
-                            },
-                            enabled = scanState !is ScanState.Scanning && hasAllPermissions,
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Outlined.Chat,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Scan", style = MaterialTheme.typography.labelLarge)
-                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Scan", style = MaterialTheme.typography.labelLarge)
+                    }
 
-                        // View toggle button
-                        if (notesFiles.isNotEmpty() || otherFiles.isNotEmpty()) {
-                            // Only show view toggle if we have content to display
-                            IconButton(onClick = { isGridView = !isGridView }) {
-                                Icon(
-                                    if (isGridView) Icons.AutoMirrored.Outlined.FormatListBulleted else Icons.Outlined.GridView,
-                                    contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View"
+                    // View toggle button
+                    if (notesFiles.isNotEmpty() || otherFiles.isNotEmpty()) {
+                        // Only show view toggle if we have content to display
+                        IconButton(onClick = { isGridView = !isGridView }) {
+                            Icon(
+                                if (isGridView) Icons.AutoMirrored.Outlined.FormatListBulleted else Icons.Outlined.GridView,
+                                contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View"
+                            )
+                        }
+                    }
+                    // Settings button
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                    }
+                }
+            })
+        }) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Handle different states based on permissions and scan status
+            when {
+                // Show permission states when permissions are missing
+                !hasAllPermissions -> {
+                    PermissionScreen(permissionDenied = permissionDenied, onRequestPermissions = {
+                        readStoragePermissionState.launchPermissionRequest()
+                    }, onRequestManageStorage = { showManageStorageDialog = true })
+                }
+
+                // Handle scan states when permissions are granted
+                hasAllPermissions -> {
+                    when (scanState) {
+                        is ScanState.Idle -> {
+                            if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
+                                // Empty state - show welcome message and instructions
+                                EmptyStateContent()
+                            } else {
+                                // Show content with tabs
+                                ContentTabs(
+                                    pagerState = pagerState,
+                                    tabs = tabs,
+                                    notesFiles = notesFiles,
+                                    otherFiles = otherFiles,
+                                    viewModel = viewModel,
+                                    isGridView = isGridView,
+                                    coroutineScope = coroutineScope
                                 )
                             }
                         }
-                        // Settings button
-                        IconButton(onClick = onNavigateToSettings) {
-                            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+
+                        is ScanState.Scanning -> {
+                            ScanningContent(
+                                scanState = scanState as ScanState.Scanning,
+                                notesFiles = notesFiles,
+                                otherFiles = otherFiles
+                            )
+                        }
+
+                        is ScanState.Completed -> {
+                            // Show content with tabs after scan completion
+                            ContentTabs(
+                                pagerState = pagerState,
+                                tabs = tabs,
+                                notesFiles = notesFiles,
+                                otherFiles = otherFiles,
+                                viewModel = viewModel,
+                                isGridView = isGridView,
+                                coroutineScope = coroutineScope
+                            )
+                        }
+
+                        is ScanState.Error -> {
+                            ErrorStateContent(
+                                errorMessage = (scanState as ScanState.Error).message,
+                                onRetry = { viewModel.scanWhatsAppFolder() })
                         }
                     }
-                })
-        }) { paddingValues ->
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) { // Handle different scan states
-            when (scanState) {
-                is ScanState.Idle -> {
-                    if (notesFiles.isEmpty() && otherFiles.isEmpty()) {
-                        // Empty state - show welcome message and instructions
-                        EmptyStateContent(hasAllPermissions = hasAllPermissions)
-                    } else {
-                        // Show content with tabs
-                        ContentTabs(
-                            pagerState = pagerState,
-                            tabs = tabs,
-                            notesFiles = notesFiles,
-                            otherFiles = otherFiles,
-                            viewModel = viewModel,
-                            isGridView = isGridView,
-                            coroutineScope = coroutineScope
-                        )
-                    }
                 }
 
-                is ScanState.Scanning -> {
-                    ScanningContent(
-                        scanState = scanState as ScanState.Scanning,
-                        notesFiles = notesFiles,
-                        otherFiles = otherFiles
-                    )
+                // Fallback: show empty state when permissions are still being requested
+                else -> {
+                    EmptyStateContent()
                 }
-
-                is ScanState.Completed -> {
-                    // Show content with tabs after scan completion
-                    ContentTabs(
-                        pagerState = pagerState,
-                        tabs = tabs,
-                        notesFiles = notesFiles,
-                        otherFiles = otherFiles,
-                        viewModel = viewModel,
-                        isGridView = isGridView,
-                        coroutineScope = coroutineScope
-                    )
-                }
-
-                is ScanState.Error -> {
-                    ErrorStateContent(
-                        errorMessage = (scanState as ScanState.Error).message,
-                        onRetry = { viewModel.scanWhatsAppFolder() })
-                }
-            }
-
-            // Show error message if present
+            }            // Show error message if present
             errorMessage?.let { error ->
                 ErrorMessageSnackbar(message = error, onDismiss = { viewModel.clearError() })
-            }
-
-            // Permission denied state
-            if (permissionDenied) {
-                PermissionDeniedContent()
             }
         }
     }
 }
 
 @Composable
-private fun EmptyStateContent(hasAllPermissions: Boolean) {
+private fun EmptyStateContent() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
@@ -428,16 +427,6 @@ private fun EmptyStateContent(hasAllPermissions: Boolean) {
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
-
-            if (!hasAllPermissions) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Note: You'll need to grant storage permissions when prompted.",
-                    style = MaterialTheme.typography.bodySmall,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
         }
     }
 }
@@ -539,13 +528,39 @@ private fun ErrorStateContent(
 }
 
 @Composable
-private fun PermissionDeniedContent() {
+private fun PermissionScreen(
+    permissionDenied: Boolean,
+    onRequestPermissions: () -> Unit,
+    onRequestManageStorage: () -> Unit,
+) {
     val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)
         ) {
+            // Choose appropriate content based on Android version and state
+            val bodyText: String
+            val primaryButtonAction: () -> Unit
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Android 11+ - Only need MANAGE_EXTERNAL_STORAGE
+                bodyText =
+                    "To access WhatsApp media files, this app needs permission to manage external storage. " + "Please tap 'Grant Permission' and allow 'All files access' in the settings."
+                primaryButtonAction = onRequestManageStorage
+            } else {
+                // Android 10 and below - Need READ_EXTERNAL_STORAGE
+                if (permissionDenied) {
+                    bodyText =
+                        "Storage permission is required to scan files. Please grant the permission to continue."
+                    primaryButtonAction = onRequestPermissions
+                } else {
+                    bodyText =
+                        "WhatSweep needs storage permission to scan and analyze your WhatsApp media files."
+                    primaryButtonAction = onRequestPermissions
+                }
+            }
+
             Text(
                 text = "Storage Permission Required",
                 style = MaterialTheme.typography.headlineMedium,
@@ -555,22 +570,34 @@ private fun PermissionDeniedContent() {
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Storage permission is required to scan files. Please grant the permission in app settings.",
+                text = bodyText,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.error
+                color = if (permissionDenied) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurface
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Button(
-                onClick = {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.fromParts("package", context.packageName, null)
-                    }
-                    context.startActivity(intent)
-                }) {
-                Text("Open App Settings", style = MaterialTheme.typography.labelLarge)
+                onClick = { primaryButtonAction.invoke() }, modifier = Modifier.fillMaxWidth(0.7f)
+            ) {
+                Text("Grant Permission", style = MaterialTheme.typography.labelLarge)
+            }
+
+            // Show additional options for denied permissions
+            if (permissionDenied) {
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", context.packageName, null)
+                        }
+                        context.startActivity(intent)
+                    }) {
+                    Text("Open App Settings", style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }
