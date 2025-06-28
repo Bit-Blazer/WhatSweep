@@ -1,0 +1,19 @@
+{
+  "name": "Android (SDK 34) on Codespaces",
+  "image": "mcr.microsoft.com/devcontainers/universal:3-bullseye",
+  "features": {
+    // drops the command-line Android SDK into /usr/local/android-sdk
+    "ghcr.io/NordcomInc/devcontainer-features/android-sdk:1": {
+      "version": "34.0.0",
+      "packages": "platform-tools,build-tools;34.0.0,platforms;android-34"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-androidtools.vscode-android"   // good Gradle/syntax support
+      ]
+    }
+  },
+  "postCreateCommand": "./gradlew --no-daemon assembleDebug"
+}
